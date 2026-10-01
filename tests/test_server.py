@@ -124,6 +124,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(body["bars"][0][0] % 86400, 0)  # daily bars sit on midnight of the trading date
 
     @unittest.skipUnless(NETWORK, "set VWAPLAB_NETWORK_TESTS=1 to run")
+    def test_yahoo_rejects_coarser_data_than_requested(self):
+        # Yahoo answers 15m + max with monthly bars; the server must not pass those off as 15m
+        status, body = self.json("GET", "/api/yahoo?symbol=SPY&interval=15m&range=max")
+        self.assertEqual(status, 400, body)
+        self.assertIn("15m", body["error"])
+
+    @unittest.skipUnless(NETWORK, "set VWAPLAB_NETWORK_TESTS=1 to run")
     def test_binance_live(self):
         status, body = self.json("GET", "/api/binance?symbol=BTCUSDT&interval=1h&bars=1500")
         self.assertEqual(status, 200, body)

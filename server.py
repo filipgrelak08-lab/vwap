@@ -17,6 +17,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -103,7 +104,12 @@ def fetch_yahoo(symbol, interval, rng, adjusted):
     if rng not in YAHOO_RANGES:
         raise ApiError(f"Unsupported range {rng}.")
     yi = "60m" if interval == "1h" else interval
-    query = urllib.parse.urlencode({"interval": yi, "range": rng, "includePrePost": "false", "events": "div,splits"})
+    params = {"interval": yi, "range": rng, "includePrePost": "false", "events": "div,splits"}
+    if rng == "max" and interval in YAHOO_DAILY:
+        # range=max comes back as monthly bars; an explicit window keeps the requested interval
+        del params["range"]
+        params.update(period1=0, period2=int(time.time()))
+    query = urllib.parse.urlencode(params)
     data = None
     for host in ("query1", "query2"):
         url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}?{query}"
@@ -123,6 +129,17 @@ def fetch_yahoo(symbol, interval, rng, adjusted):
         raise ApiError(f"Yahoo returned no data for {symbol}.", 404)
     res = results[0]
     meta = res.get("meta") or {}
+    # For ranges longer than its intraday limits, Yahoo can silently answer with coarser
+    # bars (e.g. monthly for 15m + max). Refuse that instead of mislabelling the data.
+    got = meta.get("dataGranularity")
+    if got and got != yi and not (yi == "60m" and got == "1h"):
+        hint = (
+            "Pick a shorter range, such as 10 years."
+            if interval in YAHOO_DAILY
+            else "Intraday history is limited: 1m covers 7 days, 2m-30m cover 60 days, 1h covers 2 years. "
+            "Pick a shorter range or a daily interval."
+        )
+        raise ApiError(f"Yahoo has no {interval} data for range '{rng}' (it sent {got} bars instead). {hint}", 400)
     stamps = res.get("timestamp") or []
     quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
     adj = (((res.get("indicators") or {}).get("adjclose") or [{}])[0] or {}).get("adjclose")

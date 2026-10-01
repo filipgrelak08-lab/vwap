@@ -247,6 +247,8 @@
     for (const key of Object.keys(charts)) {
       if (key === 'osc' && el.osc.hidden) continue;
       charts[key].timeScale().setVisibleLogicalRange(range);
+      // dragging the price axis switches autoscale off; get it back
+      charts[key].priceScale('right').applyOptions({ autoScale: true });
     }
     syncing = false;
   }

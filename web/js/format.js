@@ -45,7 +45,7 @@
   function price(v) {
     if (!Number.isFinite(v)) return '–';
     const a = Math.abs(v);
-    const d = a >= 1000 ? 2 : a >= 1 ? 2 : a >= 0.01 ? 4 : 6;
+    const d = a >= 1 || a === 0 ? 2 : a >= 0.01 ? 4 : 6;
     return num(v, d);
   }
 
