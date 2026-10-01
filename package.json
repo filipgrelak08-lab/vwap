@@ -1,0 +1,11 @@
+{
+  "name": "vwap-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local backtester for trading strategies",
+  "scripts": {
+    "start": "python3 server.py",
+    "test": "node --test tests/*.test.js && python3 -m unittest discover -s tests",
+    "build": "python3 tools/build_standalone.py"
+  }
+}
