@@ -18,16 +18,36 @@
 
   const DEFAULT_SETTINGS = {
     capital: 10000,
-    sizePct: 100, // % of equity committed per trade
+    sizePct: 100, // % of equity per trade (with risk sizing: the most a single position may use)
+    sizing: 'equity', // 'equity' (sizePct of equity) | 'risk' (lose riskPct of equity if the stop hits)
+    riskPct: 1,
     commissionPct: 0.02, // per side, % of traded value
     slippagePct: 0.01, // per side, % of price, always against you
     fillOn: 'open', // 'open' (next bar open) | 'close' (signal bar close)
     allowShorts: true,
-    stopLossPct: 0, // 0 = off
+    // stops & targets (0 = off). Priority: the strategy's own stop/target, then these.
+    stopLossPct: 0,
+    atrStopMult: 0, // stop = entry -/+ mult * ATR (wins over stopLossPct)
+    atrLength: 14,
     takeProfitPct: 0,
+    rrTarget: 0, // target = entry +/- rrTarget * initial risk (wins over takeProfitPct)
     trailingStopPct: 0,
+    breakEvenR: 0, // move the stop to entry once the trade is this many R in profit
+    maxBarsInTrade: 0, // time stop
     flatAtSessionEnd: false,
+    // entry filters (exits are never blocked)
+    entryStart: '', // 'HH:MM' exchange time, intraday data only
+    entryEnd: '',
+    trendFilterLength: 0, // longs only above the N-bar SMA, shorts only below
+    maxTradesPerDay: 0,
+    dailyLossPct: 0, // flatten and stop for the day after losing this % of the day's starting equity
   };
+
+  // 'HH:MM' -> minutes after midnight, or null
+  function parseClock(v) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(v || '').trim());
+    return m && +m[1] < 24 && +m[2] < 60 ? +m[1] * 60 + +m[2] : null;
+  }
 
   // ---------------------------------------------------------------- compile
 
@@ -158,34 +178,77 @@
     const sessStart = ta().sessionStart(data);
     const sessEnd = ta().sessionEnd(data);
     const sessBar = ta().sessionBar(data);
+    const dayId = ta().anchorIds(data, 'session');
     const intraday = sessStart.some((x, i) => i > 0 && !x);
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    const atr = num(s.atrStopMult) > 0 ? ta().atr(data, Math.max(1, Math.round(num(s.atrLength)) || 14)) : null;
+    const trendSma = num(s.trendFilterLength) > 0 ? ta().sma(close, Math.round(num(s.trendFilterLength))) : null;
+    const winStart = parseClock(s.entryStart);
+    const winEnd = parseClock(s.entryEnd);
+    const useWindow = intraday && (winStart !== null || winEnd !== null);
 
     const equity = new Array(n);
     const exposure = new Array(n).fill(0);
     const trades = [];
     const markers = [];
     const logs = [];
+    const skipped = { hours: 0, trend: 0, maxTrades: 0, dailyLoss: 0 };
     let cash = s.capital; // realized equity
     let pos = null;
     let pending = null;
     let commissionPaid = 0;
+    let entriesDay = null;
+    let entriesToday = 0;
+    let dayStartEquity = s.capital;
+    let haltedDay = null;
     const commRate = s.commissionPct / 100;
     const slipRate = s.slippagePct / 100;
+    const pct = (v) => (v > 0 ? v / 100 : 0);
 
-    function enter(side, rawPrice, i, opts, viaReverse) {
+    function inWindow(i) {
+      const m = Math.floor((((time[i] % 86400) + 86400) % 86400) / 60);
+      const a = winStart === null ? 0 : winStart;
+      const b = winEnd === null ? 24 * 60 : winEnd;
+      return a <= b ? m >= a && m <= b : m >= a || m <= b; // a > b: window runs past midnight
+    }
+
+    // Why a new entry is not allowed (or null). fillIdx: bar it would fill on, sigIdx: signal bar.
+    function entryBlock(side, fillIdx, sigIdx) {
+      if (useWindow && !inWindow(fillIdx)) return 'hours';
+      if (trendSma) {
+        const v = trendSma[sigIdx];
+        if (!Number.isFinite(v) || (side > 0 ? close[sigIdx] <= v : close[sigIdx] >= v)) return 'trend';
+      }
+      if (haltedDay !== null && dayId[fillIdx] === haltedDay) return 'dailyLoss';
+      if (s.maxTradesPerDay > 0 && entriesDay === dayId[fillIdx] && entriesToday >= s.maxTradesPerDay) return 'maxTrades';
+      return null;
+    }
+
+    function enter(side, rawPrice, i, opts, viaReverse, sigIdx) {
       const fill = rawPrice * (1 + side * slipRate);
       const eq = cash;
-      const sizePct = opts && opts.size !== undefined ? opts.size * 100 : s.sizePct;
-      const qty = (eq * sizePct) / 100 / fill;
+      // stop: strategy's own > ATR > %
+      let stop = opts.stop !== undefined && Number.isFinite(opts.stop) ? opts.stop : null;
+      if (stop === null && atr && atr[sigIdx] > 0) stop = fill - side * s.atrStopMult * atr[sigIdx];
+      if (stop === null && s.stopLossPct > 0) stop = fill * (1 - side * pct(s.stopLossPct));
+      const riskPerUnit = stop !== null && side * (fill - stop) > 0 ? side * (fill - stop) : null;
+      // target: strategy's own > reward:risk > %
+      let target = opts.target !== undefined && Number.isFinite(opts.target) ? opts.target : null;
+      if (target === null && s.rrTarget > 0 && riskPerUnit) target = fill + side * s.rrTarget * riskPerUnit;
+      if (target === null && s.takeProfitPct > 0) target = fill * (1 + side * pct(s.takeProfitPct));
+      // size
+      const maxQty = (eq * (opts.size !== undefined ? opts.size * 100 : s.sizePct)) / 100 / fill;
+      let qty = maxQty;
+      if (opts.size === undefined && s.sizing === 'risk' && riskPerUnit) qty = Math.min((eq * pct(s.riskPct)) / riskPerUnit, maxQty);
       if (!(qty > 0)) return;
       const comm = qty * fill * commRate;
       cash -= comm;
       commissionPaid += comm;
-      const pct = (v) => (v > 0 ? v / 100 : 0);
-      let stop = opts && opts.stop !== undefined ? opts.stop : null;
-      let target = opts && opts.target !== undefined ? opts.target : null;
-      if (stop === null && s.stopLossPct > 0) stop = fill * (1 - side * pct(s.stopLossPct));
-      if (target === null && s.takeProfitPct > 0) target = fill * (1 + side * pct(s.takeProfitPct));
+      if (entriesDay !== dayId[i]) {
+        entriesDay = dayId[i];
+        entriesToday = 0;
+      }
+      entriesToday++;
       pos = {
         side,
         qty,
@@ -193,11 +256,14 @@
         entryIndex: i,
         entryTime: time[i],
         entryComm: comm,
-        stop: Number.isFinite(stop) ? stop : null,
-        target: Number.isFinite(target) ? target : null,
-        trail: opts && opts.trail !== undefined ? pct(opts.trail) : pct(s.trailingStopPct),
-        extreme: fill,
-        label: (opts && opts.label) || (viaReverse ? 'Reverse' : side > 0 ? 'Long' : 'Short'),
+        stop,
+        stopKind: 'initial',
+        target,
+        riskPerUnit,
+        trail: opts.trail !== undefined ? pct(opts.trail) : pct(s.trailingStopPct),
+        extreme: fill, // best price so far (trailing stop, MFE)
+        worst: fill, // worst price so far (MAE)
+        label: opts.label || (viaReverse ? 'Reverse' : side > 0 ? 'Long' : 'Short'),
         checkFrom: i,
       };
       markers.push({ index: i, kind: side > 0 ? 'long' : 'short', price: fill, label: pos.label });
@@ -212,6 +278,10 @@
       commissionPaid += comm;
       cash += gross - comm;
       const pnl = gross - comm - pos.entryComm;
+      // excursions include the exit price itself, never the part of a bar after the exit
+      const best = side > 0 ? Math.max(pos.extreme, rawPrice) : Math.min(pos.extreme, rawPrice);
+      const worst = side > 0 ? Math.min(pos.worst, rawPrice) : Math.max(pos.worst, rawPrice);
+      const r = pos.riskPerUnit;
       trades.push({
         side: side > 0 ? 'long' : 'short',
         entryIndex: pos.entryIndex,
@@ -226,6 +296,12 @@
         bars: i - pos.entryIndex,
         entryReason: pos.label,
         exitReason: reason,
+        mfePct: side * (best / pos.entryPrice - 1) * 100,
+        maePct: side * (worst / pos.entryPrice - 1) * 100,
+        risk: r ? r * pos.qty : null, // $ lost if the initial stop had been hit
+        rMultiple: r ? pnl / (r * pos.qty) : null,
+        mfeR: r ? (side * (best - pos.entryPrice)) / r : null,
+        maeR: r ? (side * (worst - pos.entryPrice)) / r : null,
       });
       markers.push({ index: i, kind: 'exit', price: fill, label: reason, pnl });
       pos = null;
@@ -238,10 +314,17 @@
       }
       const side = order.type === 'long' ? 1 : -1;
       if (pos && pos.side === side) return; // already in that direction
-      const willEnter = side > 0 || s.allowShorts; // long-only: a short signal just closes the long
+      let willEnter = side > 0 || s.allowShorts; // long-only: a short signal just closes the long
+      if (willEnter) {
+        const why = entryBlock(side, i, order.i);
+        if (why) {
+          skipped[why]++;
+          willEnter = false;
+        }
+      }
       const reversing = !!pos;
-      if (pos) exitPosition(price, i, willEnter ? 'Reverse' : order.opts.label || 'Sell signal');
-      if (willEnter) enter(side, price, i, order.opts, reversing);
+      if (pos) exitPosition(price, i, willEnter ? 'Reverse' : order.opts.label || (side < 0 ? 'Sell signal' : 'Buy signal'));
+      if (willEnter) enter(side, price, i, order.opts, reversing, order.i);
     }
 
     // Stop / target / trailing checks inside bar i.
@@ -249,22 +332,46 @@
       if (!pos || i < pos.checkFrom) return;
       const L = pos.side > 0;
       let stop = pos.stop;
+      let stopReason = { initial: 'Stop loss', breakeven: 'Break-even stop', manual: 'Stop loss' }[pos.stopKind];
       if (pos.trail > 0) {
         const t = L ? pos.extreme * (1 - pos.trail) : pos.extreme * (1 + pos.trail);
-        if (stop === null || (L ? t > stop : t < stop)) stop = t;
+        if (stop === null || (L ? t > stop : t < stop)) {
+          stop = t;
+          stopReason = 'Trailing stop';
+        }
       }
       const tgt = pos.target;
       const o = open[i];
       const stopHit = stop !== null && (L ? low[i] <= stop : high[i] >= stop);
       const tgtHit = tgt !== null && (L ? high[i] >= tgt : low[i] <= tgt);
-      const stopReason = pos.trail > 0 && stop !== pos.stop ? 'Trailing stop' : 'Stop loss';
       if (tgtHit && (L ? o >= tgt : o <= tgt)) return exitPosition(o, i, 'Take profit');
       if (stopHit) return exitPosition(L ? Math.min(o, stop) : Math.max(o, stop), i, stopReason);
       if (tgtHit) return exitPosition(tgt, i, 'Take profit');
     }
 
+    // After bar i has been held to its close: update excursions, then break-even.
+    function trackBar(i) {
+      if (!pos || i < pos.checkFrom) return;
+      if (pos.side > 0) {
+        pos.extreme = Math.max(pos.extreme, high[i]);
+        pos.worst = Math.min(pos.worst, low[i]);
+      } else {
+        pos.extreme = Math.min(pos.extreme, low[i]);
+        pos.worst = Math.max(pos.worst, high[i]);
+      }
+      if (s.breakEvenR > 0 && pos.riskPerUnit && pos.stopKind !== 'breakeven') {
+        if (pos.side * (pos.extreme - pos.entryPrice) >= s.breakEvenR * pos.riskPerUnit) {
+          const be = pos.entryPrice;
+          if (pos.stop === null || (pos.side > 0 ? be > pos.stop : be < pos.stop)) {
+            pos.stop = be;
+            pos.stopKind = 'breakeven';
+          }
+        }
+      }
+    }
+
     // ---- the per-bar context handed to onBar ----
-    const position = { side: 'flat', qty: 0, entryPrice: NaN, entryIndex: -1, entryTime: null, barsHeld: 0, pnlPct: 0, stop: null, target: null };
+    const position = { side: 'flat', qty: 0, entryPrice: NaN, entryIndex: -1, entryTime: null, barsHeld: 0, pnlPct: 0, stop: null, target: null, risk: null };
     const ctx = {
       data, ind, params, ta: BT.ta, settings: s,
       i: 0, time: 0, open: 0, high: 0, low: 0, close: 0, volume: 0,
@@ -280,7 +387,11 @@
         pending = { type: 'exit', reason: o.reason || o.label || 'Exit signal', opts: o, i: ctx.i };
       },
       cancel() { pending = null; },
-      setStop(price) { if (pos) pos.stop = Number.isFinite(price) ? price : null; },
+      setStop(price) {
+        if (!pos) return;
+        pos.stop = Number.isFinite(price) ? price : null;
+        pos.stopKind = 'manual';
+      },
       setTarget(price) { if (pos) pos.target = Number.isFinite(price) ? price : null; },
       crossOver: (a, b) => BT.ta.crossover(a, b, ctx.i),
       crossUnder: (a, b) => BT.ta.crossunder(a, b, ctx.i),
@@ -319,9 +430,11 @@
       position.pnlPct = pos ? (pos.side * (close[i] / pos.entryPrice - 1)) * 100 : 0;
       position.stop = pos ? pos.stop : null;
       position.target = pos ? pos.target : null;
+      position.risk = pos && pos.riskPerUnit ? pos.riskPerUnit : null;
     }
 
     for (let i = 0; i < n; i++) {
+      if (sessStart[i] && i > 0) dayStartEquity = equity[i - 1];
       // 1. orders from the previous bar fill at this bar's open
       if (pending && pending.i < i) {
         const order = pending;
@@ -330,7 +443,7 @@
       }
       // 2. protective exits inside this bar
       checkExits(i);
-      if (pos) pos.extreme = pos.side > 0 ? Math.max(pos.extreme, high[i]) : Math.min(pos.extreme, low[i]);
+      trackBar(i);
 
       // 3. strategy logic on the closed bar
       syncCtx(i);
@@ -344,16 +457,26 @@
         }
       }
 
-      // 4. same-bar fills
+      // 4. same-bar fills and end-of-bar rules
       if (pending && (s.fillOn === 'close' || pending.opts.atClose)) {
         const order = pending;
         pending = null;
         execute(order, close[i], i);
         if (pos && pos.entryIndex === i) pos.checkFrom = i + 1;
       }
-      if (s.flatAtSessionEnd && intraday && sessEnd[i] && i < n - 1) {
-        if (pos) exitPosition(close[i], i, 'Session end');
-        if (pending && pending.type !== 'exit') pending = null;
+      if (i < n - 1) {
+        if (pos && s.maxBarsInTrade > 0 && i - pos.entryIndex >= s.maxBarsInTrade) exitPosition(close[i], i, 'Time stop');
+        if (s.flatAtSessionEnd && intraday && sessEnd[i]) {
+          if (pos) exitPosition(close[i], i, 'Session end');
+          if (pending && pending.type !== 'exit') pending = null;
+        }
+        if (s.dailyLossPct > 0 && haltedDay !== dayId[i]) {
+          const eqNow = cash + (pos ? pos.side * pos.qty * (close[i] - pos.entryPrice) : 0);
+          if (eqNow <= dayStartEquity * (1 - pct(s.dailyLossPct))) {
+            if (pos) exitPosition(close[i], i, 'Daily loss limit');
+            haltedDay = dayId[i];
+          }
+        }
       }
 
       // 5. mark to market
@@ -368,7 +491,7 @@
     const buyHold = close.map((c) => (s.capital * c) / close[0]);
     const result = {
       data, params, settings: s, ind, plots, trades, markers, logs,
-      equity, buyHold, exposure, commissionPaid,
+      equity, buyHold, exposure, commissionPaid, skipped,
     };
     result.metrics = BT.metrics.compute(result);
     return result;
@@ -405,5 +528,5 @@ export default {
 };
 `;
 
-  BT.engine = { compile, run, defaultParams, sliceData, errorLine, DEFAULT_SETTINGS, TEMPLATE };
+  BT.engine = { compile, run, defaultParams, sliceData, errorLine, parseClock, DEFAULT_SETTINGS, TEMPLATE };
 })(typeof window !== 'undefined' ? window : globalThis);

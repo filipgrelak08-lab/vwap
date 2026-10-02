@@ -74,13 +74,20 @@
             while (k < total && Date.now() - t0 < 40) {
               const xi = k % xs.length;
               const yi = Math.floor(k / xs.length);
+              // an axis is either a strategy parameter or (p.setting) an execution setting
               const params = Object.assign({}, baseParams);
-              if (x) params[x.key] = xs[xi];
-              if (y) params[y.key] = ys[yi];
-              const r = BT.engine.run(inSample, compiled, params, settings);
+              const overrides = {};
+              const assign = (p, v) => {
+                if (p && p.setting) overrides[p.setting] = v;
+                else if (p) params[p.key] = v;
+              };
+              assign(x, xs[xi]);
+              assign(y, ys[yi]);
+              const r = BT.engine.run(inSample, compiled, params, Object.assign({}, settings, overrides));
               const m = r.metrics;
               const valid = m.trades >= (minTrades || 0);
-              cells.push({ xi, yi, params, metrics: m, score: valid ? obj.get(m) : NaN, valid });
+              const axis = { x: xs[xi], y: y ? ys[yi] : undefined };
+              cells.push({ xi, yi, axis, params, overrides, metrics: m, score: valid ? obj.get(m) : NaN, valid });
               k++;
             }
           } catch (e) {
@@ -100,7 +107,7 @@
       if (outSample && outSample.length > 2) {
         for (const c of top) {
           try {
-            const r = BT.engine.run(outSample, compiled, c.params, settings);
+            const r = BT.engine.run(outSample, compiled, c.params, Object.assign({}, settings, c.overrides));
             c.oos = r.metrics;
             c.oosScore = obj.get(r.metrics);
           } catch (e) {

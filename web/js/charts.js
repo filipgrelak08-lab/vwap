@@ -359,5 +359,72 @@
     if (result) render(result);
   }
 
-  BT.charts = { init, render, fitAll, focusTrade, setShowMarkers, retheme };
+  // ---------------------------------------------------------------- scatter (trade excursions)
+
+  const SVG = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs, parent) {
+    const e = document.createElementNS(SVG, tag);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  function niceTicks(a, b, count) {
+    const span = b - a || 1;
+    const raw = span / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw);
+    const out = [];
+    for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+
+  /**
+   * points: [{ x, y, win, label }]; opts: { xLabel, yLabel, onClick(point) }.
+   * Both axes always include 0 so "against you" / "in your favour" read at a glance.
+   */
+  function scatter(container, points, opts) {
+    container.textContent = '';
+    const W = 460;
+    const H = 270;
+    const m = { l: 46, r: 12, t: 10, b: 36 };
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${opts.xLabel} against ${opts.yLabel}` }, container);
+    if (!points.length) {
+      svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'empty-note' }, svg).textContent = 'No trades to show';
+      return;
+    }
+    const ext = (vals) => {
+      let lo = Math.min(0, ...vals);
+      let hi = Math.max(0, ...vals);
+      const pad = (hi - lo || 1) * 0.06;
+      return [lo - pad, hi + pad];
+    };
+    const [x0, x1] = ext(points.map((p) => p.x));
+    const [y0, y1] = ext(points.map((p) => p.y));
+    const X = (v) => m.l + ((v - x0) / (x1 - x0)) * (W - m.l - m.r);
+    const Y = (v) => H - m.b - ((v - y0) / (y1 - y0)) * (H - m.t - m.b);
+    for (const t of niceTicks(y0, y1, 5)) {
+      svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), class: t === 0 ? 'zero' : 'grid' }, svg);
+      svgEl('text', { x: m.l - 6, y: Y(t) + 3, 'text-anchor': 'end', class: 'tick' }, svg).textContent = `${+t.toFixed(2)}%`;
+    }
+    for (const t of niceTicks(x0, x1, 5)) {
+      svgEl('line', { x1: X(t), x2: X(t), y1: m.t, y2: H - m.b, class: t === 0 ? 'zero' : 'grid' }, svg);
+      svgEl('text', { x: X(t), y: H - m.b + 13, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = `${+t.toFixed(2)}%`;
+    }
+    svgEl('text', { x: (m.l + W - m.r) / 2, y: H - 4, 'text-anchor': 'middle', class: 'axis-label' }, svg).textContent = opts.xLabel;
+    const yl = svgEl('text', { x: 11, y: (m.t + H - m.b) / 2, 'text-anchor': 'middle', class: 'axis-label', transform: `rotate(-90 11 ${(m.t + H - m.b) / 2})` }, svg);
+    yl.textContent = opts.yLabel;
+    // losers first so winners sit on top where they overlap
+    const sorted = points.slice(0, 3000).sort((a, b) => a.win - b.win);
+    for (const p of sorted) {
+      const c = svgEl('circle', { cx: X(p.x), cy: Y(p.y), r: 4, class: p.win ? 'win' : 'loss' }, svg);
+      svgEl('title', {}, c).textContent = p.label;
+      if (opts.onClick) {
+        c.style.cursor = 'pointer';
+        c.addEventListener('click', () => opts.onClick(p));
+      }
+    }
+  }
+
+  BT.charts = { init, render, fitAll, focusTrade, setShowMarkers, retheme, scatter };
 })(typeof window !== 'undefined' ? window : globalThis);

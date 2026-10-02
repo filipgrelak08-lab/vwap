@@ -154,30 +154,78 @@
 
     <!-- Execution -->
     <section class="panel" aria-labelledby="h-exec">
-      <div class="panel-head"><h2 id="h-exec">Execution and risk</h2></div>
+      <div class="panel-head"><h2 id="h-exec">Execution</h2></div>
       <div class="field-row">
         <label class="field"><span>Starting capital ($)</span><input type="number" id="set-capital" min="100" step="100"></label>
-        <label class="field"><span>Position size (% equity)</span><input type="number" id="set-sizePct" min="1" max="1000" step="1"></label>
+        <label class="field"><span>Fill orders at</span>
+          <select id="set-fillOn">
+            <option value="open">Next bar's open</option>
+            <option value="close">Signal bar's close</option>
+          </select>
+        </label>
       </div>
       <div class="field-row">
         <label class="field"><span>Commission (% per side)</span><input type="number" id="set-commissionPct" min="0" step="0.005"></label>
         <label class="field"><span>Slippage (% per side)</span><input type="number" id="set-slippagePct" min="0" step="0.005"></label>
       </div>
-      <label class="field"><span>Fill orders at</span>
-        <select id="set-fillOn">
-          <option value="open">Next bar's open</option>
-          <option value="close">Signal bar's close</option>
-        </select>
-      </label>
-      <div class="field-row three">
-        <label class="field"><span>Stop loss %</span><input type="number" id="set-stopLossPct" min="0" step="0.1" placeholder="off"></label>
-        <label class="field"><span>Take profit %</span><input type="number" id="set-takeProfitPct" min="0" step="0.1" placeholder="off"></label>
-        <label class="field"><span>Trailing %</span><input type="number" id="set-trailingStopPct" min="0" step="0.1" placeholder="off"></label>
-      </div>
       <label class="check"><input type="checkbox" id="set-allowShorts"> Allow short selling</label>
-      <label class="check"><input type="checkbox" id="set-flatAtSessionEnd"> Close positions at the end of each day (intraday data)</label>
-      <p class="hint">Typical costs: US stocks 0–0.01% commission, crypto 0.04–0.1%. Strategy stops override the % stops.</p>
+      <p class="hint">Typical costs: US stocks 0–0.01% commission, crypto 0.04–0.1%.</p>
     </section>
+
+    <details class="panel fold" id="fold-size">
+      <summary><h2>Position size</h2><span class="fold-badge" id="badge-size"></span></summary>
+      <div class="fold-body">
+        <label class="field"><span>Size each trade by</span>
+          <select id="set-sizing">
+            <option value="equity">% of equity</option>
+            <option value="risk">Risk per trade (% of equity lost at the stop)</option>
+          </select>
+        </label>
+        <div class="field-row">
+          <label class="field"><span id="sizePctLabel">Position size (% equity)</span><input type="number" id="set-sizePct" min="1" max="1000" step="1"></label>
+          <label class="field"><span>Risk per trade (%)</span><input type="number" id="set-riskPct" min="0.05" max="100" step="0.25"></label>
+        </div>
+        <p class="hint">Risk per trade sizes each position so that hitting the stop costs that % of your account. It needs a stop (from the strategy, ATR or %); position size becomes the most one trade may use.</p>
+      </div>
+    </details>
+
+    <details class="panel fold" id="fold-exits">
+      <summary><h2>Stops and targets</h2><span class="fold-badge" id="badge-exits"></span></summary>
+      <div class="fold-body">
+        <div class="field-row three">
+          <label class="field"><span>Stop loss %</span><input type="number" id="set-stopLossPct" min="0" step="0.1" placeholder="off"></label>
+          <label class="field"><span>ATR stop (× ATR)</span><input type="number" id="set-atrStopMult" min="0" step="0.25" placeholder="off"></label>
+          <label class="field"><span>ATR length</span><input type="number" id="set-atrLength" min="1" step="1"></label>
+        </div>
+        <div class="field-row three">
+          <label class="field"><span>Take profit %</span><input type="number" id="set-takeProfitPct" min="0" step="0.1" placeholder="off"></label>
+          <label class="field"><span>Reward:risk (R)</span><input type="number" id="set-rrTarget" min="0" step="0.25" placeholder="off"></label>
+          <label class="field"><span>Trailing %</span><input type="number" id="set-trailingStopPct" min="0" step="0.1" placeholder="off"></label>
+        </div>
+        <div class="field-row">
+          <label class="field"><span>Break-even after (R)</span><input type="number" id="set-breakEvenR" min="0" step="0.25" placeholder="off"></label>
+          <label class="field"><span>Time stop (bars)</span><input type="number" id="set-maxBarsInTrade" min="0" step="1" placeholder="off"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="set-flatAtSessionEnd"> Close positions at the end of each day (intraday data)</label>
+        <p class="hint">1R is the distance from entry to the stop. A strategy's own stop and target come first; then the ATR stop beats stop loss %, and reward:risk beats take profit %. Reward:risk and break-even need a stop.</p>
+      </div>
+    </details>
+
+    <details class="panel fold" id="fold-filters">
+      <summary><h2>Entry filters</h2><span class="fold-badge" id="badge-filters"></span></summary>
+      <div class="fold-body">
+        <div class="field-row">
+          <label class="field"><span>Enter from</span><input type="time" id="set-entryStart"></label>
+          <label class="field"><span>Enter until</span><input type="time" id="set-entryEnd"></label>
+        </div>
+        <div class="field-row three">
+          <label class="field"><span>Trend SMA</span><input type="number" id="set-trendFilterLength" min="0" step="1" placeholder="off"></label>
+          <label class="field"><span>Max trades / day</span><input type="number" id="set-maxTradesPerDay" min="0" step="1" placeholder="off"></label>
+          <label class="field"><span>Daily loss limit %</span><input type="number" id="set-dailyLossPct" min="0" step="0.1" placeholder="off"></label>
+        </div>
+        <p class="hint">Filters only block new entries; exits always go through. Trading hours use exchange time and apply to intraday data. Trend SMA: longs only above it, shorts only below. The daily loss limit closes the position and stops trading until the next day.</p>
+      </div>
+    </details>
 
     <div class="run-dock">
       <button type="button" class="btn primary" id="runBtn">Run backtest</button>
@@ -255,12 +303,35 @@
           <table class="data-table" id="tradesTable">
             <thead><tr>
               <th>#</th><th>Side</th><th>Entry</th><th class="num">Entry price</th><th>Exit</th><th class="num">Exit price</th>
-              <th class="num">Bars</th><th class="num">P&amp;L</th><th class="num">Return</th><th>Exit reason</th>
+              <th class="num">Bars</th><th class="num">P&amp;L</th><th class="num">Return</th><th class="num">R</th>
+              <th class="num" title="Maximum adverse excursion: the worst point against you while the trade was open">MAE</th>
+              <th class="num" title="Maximum favourable excursion: the best point in your favour while the trade was open">MFE</th><th>Exit reason</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
         <p class="empty" id="tradesEmpty" hidden>No trades. Try loosening the entry conditions or loading more data.</p>
+      </div>
+      <div class="card" id="excursionCard">
+        <div class="card-head">
+          <h3>Where to put stops and targets</h3>
+          <div class="legend-static">
+            <span class="key"><i class="dot-key win"></i>Winning trade</span>
+            <span class="key"><i class="dot-key loss"></i>Losing trade</span>
+          </div>
+        </div>
+        <ul class="insights" id="excursionInsights"></ul>
+        <div class="scatter-pair">
+          <figure class="scatter">
+            <figcaption>Worst point against you (MAE) vs final result</figcaption>
+            <div id="maeChart"></div>
+          </figure>
+          <figure class="scatter">
+            <figcaption>Best point in your favour (MFE) vs final result</figcaption>
+            <div id="mfeChart"></div>
+          </figure>
+        </div>
+        <p class="hint">Each dot is a trade. Left: winners bunched close to 0 means a tighter stop would have kept them while cutting losers short. Right: losers far to the right were in profit before turning around; a target or break-even stop could have saved them.</p>
       </div>
       <div class="card" id="logCard" hidden>
         <div class="card-head"><h3>Strategy log</h3><span class="hint inline">Output of ctx.log()</span></div>
@@ -396,11 +467,11 @@
             <p><code>plot(name, series, { color, style, pane })</code> draws a line. <code>style</code>: line, dashed, dots, histogram. <code>pane: 'lower'</code> puts it under the price. Colours: vwap, band, accent, up, down or any CSS colour.</p>
             <h4>onBar(ctx)</h4>
             <p>Runs after each bar closes. <code>ctx.i</code>, <code>ctx.close</code> (and open, high, low, volume, time), <code>ctx.ind</code>, <code>ctx.params</code>, <code>ctx.equity</code>.</p>
-            <p>Position: <code>ctx.isFlat</code>, <code>ctx.isLong</code>, <code>ctx.isShort</code>, <code>ctx.position.entryPrice</code>, <code>.barsHeld</code>, <code>.pnlPct</code>.</p>
+            <p>Position: <code>ctx.isFlat</code>, <code>ctx.isLong</code>, <code>ctx.isShort</code>, <code>ctx.position.entryPrice</code>, <code>.barsHeld</code>, <code>.pnlPct</code>, <code>.risk</code> (1R in price).</p>
             <p>Session: <code>ctx.newSession</code>, <code>ctx.lastBarOfSession</code>, <code>ctx.sessionBar</code>, <code>ctx.hour</code>, <code>ctx.minute</code>, <code>ctx.dayOfWeek</code>.</p>
             <h4>Orders</h4>
             <p><code>ctx.long(opts)</code>, <code>ctx.short(opts)</code>, <code>ctx.exit(reason)</code>, <code>ctx.cancel()</code>, <code>ctx.setStop(price)</code>, <code>ctx.setTarget(price)</code>.</p>
-            <p><code>opts</code>: <code>stop</code>, <code>target</code> (prices), <code>trail</code> (%), <code>size</code> (0–1 of equity), <code>label</code>, <code>atClose</code>.</p>
+            <p><code>opts</code>: <code>stop</code>, <code>target</code> (prices), <code>trail</code> (%), <code>size</code> (0–1 of equity), <code>label</code>, <code>atClose</code>. Your own stop and target win over the sidebar's stop and target settings.</p>
             <p>Orders fill at the next bar's open. Stops and targets trigger inside the bar; a gap fills at the open.</p>
             <h4>Helpers</h4>
             <p><code>ctx.crossOver(a, b)</code>, <code>ctx.crossUnder(a, b)</code>, <code>ctx.prev(series, n)</code>, <code>ctx.log(...)</code>.</p>

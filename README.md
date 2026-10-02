@@ -28,13 +28,38 @@ Requirements: Python 3.8+ and a current browser. Live data needs an internet con
    - **CSV**: open a file, or drop CSVs into `data/` and pick them from the list. Columns: `Date` (or `Datetime`/`Timestamp`), `Open`, `High`, `Low`, `Close`, `Volume`. Exports from Yahoo, TradingView, Binance, Nasdaq and MetaTrader work as-is.
    - **From / To** narrows the test to a date range.
 2. **Strategy**: choose one and adjust its parameters. With auto-run on, results update as you drag.
-3. **Execution and risk**: capital, position size, commission, slippage, fill timing, % stop loss / take profit / trailing stop, shorting, and an option to close positions at the end of each day.
+3. **Execution**, **Position size**, **Stops and targets**, **Entry filters** (see [Risk settings](#risk-settings)): capital, costs, fill timing, shorting, how big each trade is, where it exits, and when new trades are allowed. They apply to every strategy.
 4. **Results**: summary tiles, then tabs:
    - **Chart**: candles with indicators and entry/exit markers, plus equity vs buy and hold and drawdown. All charts zoom and pan together.
-   - **Trades**: statistics and the full trade list. Click a trade to jump to it on the chart. Download as CSV.
+   - **Trades**: statistics, the full trade list with R-multiple, MAE and MFE per trade, and two scatter charts showing where stops and targets would have worked. Click a trade to jump to it on the chart. Download as CSV.
    - **Monthly returns**: a calendar heatmap.
-   - **Optimize**: sweep one or two parameters. Choose "Optimize on first 70%" to rank settings on the first part of the data and see how the best ones did on the rest.
+   - **Optimize**: sweep one or two strategy parameters or risk settings (e.g. ATR stop × reward:risk). Choose "Optimize on first 70%" to rank settings on the first part of the data and see how the best ones did on the rest.
    - **Code**: the strategy source. `Ctrl/⌘ + Enter` runs, `Ctrl/⌘ + S` saves to `strategies/<name>.js`.
+
+## Risk settings
+
+**R** is the distance from entry to the initial stop. A trade that makes twice what it risked is +2R.
+
+| Setting | What it does |
+|---|---|
+| Size each trade by **% of equity** | Every trade uses the position size % of your current equity. |
+| Size each trade by **risk per trade** | Size so that hitting the stop loses that % of equity. Needs a stop; the position size becomes a cap. |
+| **Stop loss %** | Fixed % stop from the entry price. |
+| **ATR stop (× ATR)** | Stop k × ATR from entry, using the ATR of the signal bar. Adapts to volatility. |
+| **Take profit %** | Fixed % target. |
+| **Reward:risk (R)** | Target = entry ± R × the stop distance. |
+| **Trailing %** | Stop that follows the best price by this %. |
+| **Break-even after (R)** | Once the trade is this many R in profit, the stop moves to the entry price. |
+| **Time stop (bars)** | Close after this many bars, at the bar's close. |
+| **Close positions at the end of each day** | Intraday data only. |
+| **Enter from / until** | New trades only in this window (exchange time, intraday data). |
+| **Trend SMA** | Longs only above this SMA, shorts only below it. |
+| **Max trades / day** | Stop opening trades after this many in a day. |
+| **Daily loss limit %** | When equity falls this % below the day's start, close the position and stop for the day. |
+
+Priority when several apply: the strategy's own `stop`/`target` first, then the ATR stop before stop loss %, and reward:risk before take profit %. Filters never block exits. The Trades tab lists how many signals each filter skipped.
+
+**MAE** (maximum adverse excursion) is the worst point against you while a trade was open; **MFE** (maximum favourable excursion) is the best point in your favour. If 90% of winners never went more than 0.4% against you, a 2% stop is wider than it needs to be. If losers were often in profit first, a target or break-even stop could have saved them.
 
 ## Writing a strategy
 
@@ -77,10 +102,10 @@ Click **New strategy** in the app to start from this template, or copy the examp
 | **setup({ data, params, ta, plot })** | `data.open/high/low/close/volume/time` are arrays. Return what `onBar` needs; it arrives as `ctx.ind`. |
 | **plot(name, series, opts)** | `opts.color`: `vwap`, `band`, `accent`, `up`, `down` or any CSS colour. `opts.style`: `line`, `dashed`, `dots`, `histogram`. `opts.pane: 'lower'` draws below the price. `opts.levels: [30, 70]` adds guide lines. |
 | **bar data** | `ctx.i`, `ctx.open`, `ctx.high`, `ctx.low`, `ctx.close`, `ctx.volume`, `ctx.time` |
-| **position** | `ctx.isFlat`, `ctx.isLong`, `ctx.isShort`, `ctx.position.entryPrice`, `.barsHeld`, `.pnlPct`, `ctx.equity` |
+| **position** | `ctx.isFlat`, `ctx.isLong`, `ctx.isShort`, `ctx.position.entryPrice`, `.barsHeld`, `.pnlPct`, `.stop`, `.target`, `.risk` (1R in price), `ctx.equity` |
 | **session / time** | `ctx.newSession`, `ctx.lastBarOfSession`, `ctx.sessionBar` (0 = first bar of the day), `ctx.hour`, `ctx.minute`, `ctx.dayOfWeek` (0 = Sunday) |
 | **orders** | `ctx.long(opts)`, `ctx.short(opts)`, `ctx.exit(reason)`, `ctx.cancel()`, `ctx.setStop(price)`, `ctx.setTarget(price)` |
-| **order opts** | `stop`, `target` (prices), `trail` (%), `size` (0–1 of equity), `label`, `atClose: true` (fill at this bar's close) |
+| **order opts** | `stop`, `target` (prices), `trail` (%), `size` (0–1 of equity; skips risk sizing), `label`, `atClose: true` (fill at this bar's close) |
 | **helpers** | `ctx.crossOver(a, b)`, `ctx.crossUnder(a, b)`, `ctx.prev(series, n)`, `ctx.log(...)` |
 | **ta** | `sma ema wma rma stdev highest lowest rsi macd stoch roc change zscore bollinger donchian keltner atr trueRange adx obv hlc3 hl2 ohlc4 vwap vwapBands rollingVwap anchorIds sessionStart sessionEnd sessionBar crossover crossunder` |
 
@@ -107,7 +132,7 @@ Keep per-run state (for example "already traded today") in the object `setup()` 
 - `onBar` runs after a bar closes. Orders fill at the **next bar's open** (or at the same bar's close if you choose that, or pass `atClose: true`). The strategy never sees future bars.
 - Stops, targets and trailing stops trigger inside a bar using its high and low. If the bar opens beyond the level (a gap), the fill is the open. If a stop and a target are both inside one bar, the stop is assumed to hit first.
 - One position at a time. `long()` while short closes the short and opens a long. With shorting off, a short signal only closes the long.
-- Position size is a percentage of current equity, with fractional quantities. Commission is a percentage of traded value per side; slippage moves every fill against you.
+- Position size is a percentage of current equity (or set by risk per trade), with fractional quantities. Commission is a percentage of traded value per side; slippage moves every fill against you.
 - Statistics are annualised using the calendar span of the data, so they work for any bar size and for 24/7 markets. Sharpe and Sortino use a 0% risk-free rate.
 - Intraday times are shown in the exchange's local time (UTC for Binance), so "the session" means the exchange's trading day.
 

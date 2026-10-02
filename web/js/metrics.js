@@ -78,6 +78,15 @@
     }
     const inMarket = exposure.reduce((a, x) => a + (x !== 0 ? 1 : 0), 0);
     const longs = trades.filter((t) => t.side === 'long');
+    const withR = trades.filter((t) => Number.isFinite(t.rMultiple));
+    // |value| below which the given share of the list falls (e.g. 0.9 -> 90th percentile)
+    const quantile = (vals, q) => {
+      if (!vals.length) return NaN;
+      const v = vals.slice().sort((a, b) => a - b);
+      return v[Math.min(v.length - 1, Math.floor(q * (v.length - 1) + 1e-9))];
+    };
+    const winMae = wins.map((t) => -t.maePct).filter(Number.isFinite);
+    const lossMfe = losses.map((t) => t.mfePct).filter(Number.isFinite);
     const shorts = trades.filter((t) => t.side === 'short');
 
     return {
@@ -112,6 +121,18 @@
       longWinRate: longs.length ? (longs.filter((t) => t.pnl > 0).length / longs.length) * 100 : 0,
       shortTrades: shorts.length,
       shortWinRate: shorts.length ? (shorts.filter((t) => t.pnl > 0).length / shorts.length) * 100 : 0,
+      // R-multiples: only trades that had a stop at entry
+      rTrades: withR.length,
+      avgR: withR.length ? avg(withR, (t) => t.rMultiple) : NaN,
+      bestR: withR.length ? Math.max(...withR.map((t) => t.rMultiple)) : NaN,
+      worstR: withR.length ? Math.min(...withR.map((t) => t.rMultiple)) : NaN,
+      // excursions (MAE = worst point against you, MFE = best point in your favour)
+      avgMaePct: avg(trades, (t) => t.maePct || 0),
+      avgMfePct: avg(trades, (t) => t.mfePct || 0),
+      winnersMae90: -quantile(winMae, 0.9), // 90% of winners never went further against you than this
+      losersMfeAvg: lossMfe.length ? lossMfe.reduce((a, x) => a + x, 0) / lossMfe.length : NaN,
+      losersUpAtSomePoint: lossMfe.length ? (lossMfe.filter((x) => x > 0.1).length / lossMfe.length) * 100 : NaN,
+      skipped: result.skipped || { hours: 0, trend: 0, maxTrades: 0, dailyLoss: 0 },
     };
   }
 

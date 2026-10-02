@@ -388,16 +388,43 @@
 
   // ---------------------------------------------------------------- settings
 
-  const SETTING_IDS = ['capital', 'sizePct', 'commissionPct', 'slippagePct', 'fillOn', 'stopLossPct', 'takeProfitPct', 'trailingStopPct', 'allowShorts', 'flatAtSessionEnd'];
+  const SETTING_IDS = [
+    'capital', 'fillOn', 'commissionPct', 'slippagePct', 'allowShorts',
+    'sizing', 'sizePct', 'riskPct',
+    'stopLossPct', 'atrStopMult', 'atrLength', 'takeProfitPct', 'rrTarget', 'trailingStopPct', 'breakEvenR', 'maxBarsInTrade', 'flatAtSessionEnd',
+    'entryStart', 'entryEnd', 'trendFilterLength', 'maxTradesPerDay', 'dailyLossPct',
+  ];
+  // number settings where 0 means "off" (shown as an empty box)
+  const OFF_WHEN_ZERO = new Set(['stopLossPct', 'atrStopMult', 'takeProfitPct', 'rrTarget', 'trailingStopPct', 'breakEvenR', 'maxBarsInTrade', 'trendFilterLength', 'maxTradesPerDay', 'dailyLossPct']);
+  // must be > 0
+  const POSITIVE = new Set(['capital', 'sizePct', 'riskPct', 'atrLength']);
 
   function renderSettings() {
     for (const key of SETTING_IDS) {
       const input = $(`set-${key}`);
       const v = state.settings[key];
       if (input.type === 'checkbox') input.checked = !!v;
-      else if (input.type === 'number') input.value = v ? v : key.endsWith('LossPct') || key.endsWith('ProfitPct') || key.startsWith('trailing') ? '' : v;
-      else input.value = v;
+      else if (input.type === 'number') input.value = OFF_WHEN_ZERO.has(key) && !v ? '' : v;
+      else input.value = v === undefined || v === null ? '' : v;
     }
+    updateSettingBadges();
+  }
+
+  function updateSettingBadges() {
+    const st = state.settings;
+    const risk = st.sizing === 'risk';
+    $('set-riskPct').disabled = !risk;
+    $('sizePctLabel').textContent = risk ? 'Max position (% equity)' : 'Position size (% equity)';
+    const badge = (id, text, on) => {
+      $(id).textContent = text;
+      $(id).classList.toggle('on', on);
+    };
+    badge('badge-size', risk ? `${st.riskPct}% risk` : `${st.sizePct}% equity`, risk);
+    const exits = ['stopLossPct', 'atrStopMult', 'takeProfitPct', 'rrTarget', 'trailingStopPct', 'breakEvenR', 'maxBarsInTrade'].filter((k) => st[k] > 0).length + (st.flatAtSessionEnd ? 1 : 0);
+    badge('badge-exits', exits ? `${exits} on` : 'off', exits > 0);
+    const filters = (st.entryStart || st.entryEnd ? 1 : 0) + ['trendFilterLength', 'maxTradesPerDay', 'dailyLossPct'].filter((k) => st[k] > 0).length;
+    badge('badge-filters', filters ? `${filters} on` : 'off', filters > 0);
+    return { exits, filters, risk };
   }
 
   function bindSettings() {
@@ -407,17 +434,22 @@
         let v;
         if (input.type === 'checkbox') v = input.checked;
         else if (input.type === 'number') {
-          v = input.value === '' ? 0 : Number(input.value);
+          v = input.value === '' ? (POSITIVE.has(key) ? NaN : 0) : Number(input.value);
           if (!Number.isFinite(v) || v < 0) return;
-          if (key === 'capital' && v <= 0) return;
-          if (key === 'sizePct' && v <= 0) return;
+          if (POSITIVE.has(key) && v <= 0) return;
         } else v = input.value;
         state.settings[key] = v;
+        updateSettingBadges();
         persistSoon();
         scheduleRun();
       };
       input.addEventListener(input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input', handler);
     }
+    // open the groups that have something switched on
+    const on = updateSettingBadges();
+    $('fold-size').open = on.risk;
+    $('fold-exits').open = on.exits > 0;
+    $('fold-filters').open = on.filters > 0;
   }
 
   // ---------------------------------------------------------------- run
@@ -516,7 +548,7 @@
       kpi('CAGR', f.pct(m.cagr, 1), sign(m.cagr), `annualised over ${yrs}`),
       kpi('Max drawdown', f.pct(m.maxDrawdown, 1), m.maxDrawdown < 0 ? 'neg' : '', `buy and hold ${f.pct(m.buyHoldMaxDrawdown, 1)}`),
       kpi('Sharpe', f.num(m.sharpe, 2), '', `Sortino ${f.num(m.sortino, 2)} · Calmar ${f.num(m.calmar, 2)}`),
-      kpi('Profit factor', f.num(m.profitFactor, 2), '', `expectancy ${f.signedMoney(m.expectancy)} per trade`),
+      kpi('Profit factor', f.num(m.profitFactor, 2), '', `expectancy ${f.signedMoney(m.expectancy)}${m.rTrades ? ` · ${f.num(m.avgR, 2)}R` : ''} per trade`),
       kpi('Win rate', f.pct(m.winRate, 1, false), '', `avg win ${f.pct(m.avgWinPct)} · loss ${f.pct(m.avgLossPct)}`),
       kpi('Trades', f.int(m.trades), '', `avg ${f.num(m.avgBarsHeld, 1)} bars held`),
       kpi('Time in market', f.pct(m.exposurePct, 1, false), '', `volatility ${f.pct(m.volatility, 1, false)} a year`)
@@ -538,6 +570,9 @@
       ['Longest losing streak', f.int(m.maxLossStreak)],
       ['Long trades (win rate)', `${f.int(m.longTrades)} (${f.pct(m.longWinRate, 0, false)})`],
       ['Short trades (win rate)', `${f.int(m.shortTrades)} (${f.pct(m.shortWinRate, 0, false)})`],
+      ['Average R per trade', m.rTrades ? `${f.num(m.avgR, 2)}R` : 'needs a stop'],
+      ['Best / worst R', m.rTrades ? `${f.num(m.bestR, 2)}R / ${f.num(m.worstR, 2)}R` : '–'],
+      ['Average MAE / MFE', `${f.pct(m.avgMaePct)} / ${f.pct(m.avgMfePct)}`],
       ['Commission paid', f.money(m.commissionPaid, 2)],
       ['Longest drawdown', `${f.int(m.longestDrawdownBars)} bars`],
       ['Annual volatility', f.pct(m.volatility, 1, false)],
@@ -573,6 +608,9 @@
         [f.int(t.bars), 'num mono'],
         [f.signedMoney(t.pnl), `num mono ${sign(t.pnl)}`],
         [f.pct(t.returnPct), `num mono ${sign(t.returnPct)}`],
+        [Number.isFinite(t.rMultiple) ? `${f.num(t.rMultiple, 2)}R` : '–', `num mono ${sign(t.rMultiple)}`],
+        [f.pct(t.maePct), 'num mono'],
+        [f.pct(t.mfePct), 'num mono'],
         [t.exitReason, ''],
       ];
       for (const [text, cls] of cells) {
@@ -593,8 +631,59 @@
     tbody.appendChild(frag);
     $('tradesEmpty').hidden = res.trades.length > 0;
 
+    renderExcursions(res);
     $('logCard').hidden = !res.logs.length;
     $('logBox').textContent = res.logs.map((l) => `${f.time(d.time[l.index], d)}  ${l.text}`).join('\n');
+  }
+
+  function renderExcursions(res) {
+    const m = res.metrics;
+    const list = $('excursionInsights');
+    list.textContent = '';
+    const say = (parts) => {
+      const li = document.createElement('li');
+      for (const p of parts) {
+        if (Array.isArray(p)) {
+          const b = document.createElement('b');
+          b.textContent = p[0];
+          li.appendChild(b);
+        } else li.appendChild(document.createTextNode(p));
+      }
+      list.appendChild(li);
+    };
+    const wins = res.trades.filter((t) => t.pnl > 0).length;
+    const losses = res.trades.length - wins;
+    if (wins >= 5) {
+      say(['90% of winning trades never went more than ', [f.pct(-m.winnersMae90)], ' against you. A stop just beyond that would have kept almost all of them.']);
+    }
+    if (losses >= 5 && Number.isFinite(m.losersMfeAvg)) {
+      say(['Losing trades were up ', [f.pct(m.losersMfeAvg)], ' on average at their best; ', [f.pct(m.losersUpAtSomePoint, 0, false)], ' of them were in profit at some point.']);
+    }
+    if (m.rTrades) say(['Average result: ', [`${f.num(m.avgR, 2)}R`], ` per trade, over ${f.int(m.rTrades)} trades with a stop.`]);
+    else if (res.trades.length) say(['Set a stop (strategy, ATR or stop loss %) to see results in R.']);
+    const sk = m.skipped;
+    const skippedTotal = sk.hours + sk.trend + sk.maxTrades + sk.dailyLoss;
+    if (skippedTotal) {
+      const why = [['trading hours', sk.hours], ['trend filter', sk.trend], ['max trades per day', sk.maxTrades], ['daily loss limit', sk.dailyLoss]]
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k} ${f.int(v)}`)
+        .join(', ');
+      say(['Entry filters skipped ', [f.int(skippedTotal)], ` signals (${why}).`]);
+    }
+    if (!list.children.length) say(['Not enough trades yet to say where stops and targets belong.']);
+
+    const d = res.data;
+    const pts = (key) =>
+      res.trades.map((t, k) => ({
+        x: t[key],
+        y: t.returnPct,
+        win: t.pnl > 0,
+        trade: t,
+        label: `#${k + 1} ${t.side} ${f.time(t.entryTime, d)}: result ${f.pct(t.returnPct)}, ${key === 'maePct' ? 'worst' : 'best'} ${f.pct(t[key])}`,
+      }));
+    const onClick = (p) => showTrade(p.trade);
+    BT.charts.scatter($('maeChart'), pts('maePct'), { xLabel: 'Worst point against you (MAE)', yLabel: 'Trade result', onClick });
+    BT.charts.scatter($('mfeChart'), pts('mfePct'), { xLabel: 'Best point in your favour (MFE)', yLabel: 'Trade result', onClick });
   }
 
   function showTrade(t) {
@@ -659,10 +748,11 @@
     const res = state.result;
     if (!res) return;
     const d = res.data;
-    const lines = ['side,entry_time,entry_price,exit_time,exit_price,qty,bars,pnl,return_pct,entry_reason,exit_reason'];
+    const lines = ['side,entry_time,entry_price,exit_time,exit_price,qty,bars,pnl,return_pct,r_multiple,mae_pct,mfe_pct,entry_reason,exit_reason'];
     for (const t of res.trades) {
       const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
-      lines.push([t.side, f.time(t.entryTime, d), t.entryPrice, f.time(t.exitTime, d), t.exitPrice, t.qty, t.bars, t.pnl.toFixed(2), t.returnPct.toFixed(4), q(t.entryReason), q(t.exitReason)].join(','));
+      const r = Number.isFinite(t.rMultiple) ? t.rMultiple.toFixed(3) : '';
+      lines.push([t.side, f.time(t.entryTime, d), t.entryPrice, f.time(t.exitTime, d), t.exitPrice, t.qty, t.bars, t.pnl.toFixed(2), t.returnPct.toFixed(4), r, t.maePct.toFixed(4), t.mfePct.toFixed(4), q(t.entryReason), q(t.exitReason)].join(','));
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -967,28 +1057,56 @@
         o.textContent = 'None';
         sel.appendChild(o);
       }
-      for (const p of params) {
-        const o = document.createElement('option');
-        o.value = p.key;
-        o.textContent = p.label;
-        sel.appendChild(o);
-      }
+      const group = (label, list) => {
+        const g = document.createElement('optgroup');
+        g.label = label;
+        for (const p of list) {
+          const o = document.createElement('option');
+          o.value = p.key;
+          o.textContent = p.label;
+          g.appendChild(o);
+        }
+        sel.appendChild(g);
+      };
+      if (params.length) group('Strategy parameters', params);
+      group('Stops, targets and filters', SWEEP_SETTINGS);
     };
     fill($('optX'), false);
     fill($('optY'), true);
     const numeric = params.filter((p) => p.type === 'number');
-    $('optX').value = numeric[0] ? numeric[0].key : params[0] ? params[0].key : '';
+    $('optX').value = numeric[0] ? numeric[0].key : params[0] ? params[0].key : SWEEP_SETTINGS[0].key;
     $('optY').value = numeric[1] ? numeric[1].key : '';
     axisDefaults('X');
     axisDefaults('Y');
     $('optResults').hidden = true;
-    $('optRunBtn').disabled = !params.length;
     updateOptCount();
   }
 
+  // execution settings that can be swept like strategy parameters
+  const SWEEP_SETTINGS = [
+    ['atrStopMult', 'ATR stop (× ATR)', 0.5, 5, 0.5],
+    ['stopLossPct', 'Stop loss %', 0.5, 10, 0.5],
+    ['rrTarget', 'Reward:risk (R)', 0.5, 5, 0.5],
+    ['takeProfitPct', 'Take profit %', 0.5, 10, 0.5],
+    ['trailingStopPct', 'Trailing stop %', 0.5, 10, 0.5],
+    ['breakEvenR', 'Break-even after (R)', 0.5, 3, 0.5],
+    ['maxBarsInTrade', 'Time stop (bars)', 5, 100, 5],
+    ['riskPct', 'Risk per trade %', 0.25, 5, 0.25],
+    ['trendFilterLength', 'Trend SMA', 20, 300, 20],
+  ].map(([setting, label, min, max, step]) => ({ key: `set:${setting}`, setting, label, type: 'number', min, max, step }));
+
   function optParam(axis) {
     const key = $(`opt${axis}`).value;
-    return key && state.compiled ? state.compiled.params.find((p) => p.key === key) : null;
+    if (!key) return null;
+    if (key.startsWith('set:')) return SWEEP_SETTINGS.find((p) => p.key === key) || null;
+    return state.compiled ? state.compiled.params.find((p) => p.key === key) : null;
+  }
+
+  // the value an axis has in the current, un-swept configuration
+  function currentAxisValue(p, stratId) {
+    if (!p) return undefined;
+    if (p.setting) return state.settings[p.setting];
+    return paramsFor(stratId, state.compiled)[p.key];
   }
 
   function axisDefaults(axis) {
@@ -1093,7 +1211,9 @@
     const mid = MIDPOINTS[objKey] || 0;
     const scores = out.cells.filter((c) => c.valid && Number.isFinite(c.score)).map((c) => c.score);
     const maxDev = Math.max(1e-9, ...scores.map((s) => Math.abs(s - mid)));
-    const current = paramsFor(stratId, state.compiled);
+    const curX = currentAxisValue(x, stratId);
+    const curY = currentAxisValue(y, stratId);
+    const short = (p) => (p.setting ? p.setting : p.key);
     const splitNote = out.splitTime ? ` · in-sample before ${f.date(out.splitTime)}` : '';
     $('optHeatTitle').textContent = `${out.objective.label} by ${x.label}${y ? ` and ${y.label}` : ''}${splitNote}`;
 
@@ -1102,7 +1222,7 @@
     heat.style.gridTemplateColumns = `auto repeat(${out.xs.length}, minmax(46px, 1fr))`;
     const corner = document.createElement('div');
     corner.className = 'corner';
-    corner.textContent = y ? `${y.key} ↓ ${x.key} →` : `${x.key} →`;
+    corner.textContent = y ? `${short(y)} ↓ ${short(x)} →` : `${short(x)} →`;
     heat.appendChild(corner);
     for (const xv of out.xs) {
       const d = document.createElement('div');
@@ -1120,7 +1240,7 @@
         const c = out.cells[yi * out.xs.length + xi];
         const b = document.createElement('button');
         b.type = 'button';
-        const desc = `${x.key}=${c.params[x.key]}${y ? `, ${y.key}=${c.params[y.key]}` : ''}`;
+        const desc = `${short(x)}=${c.axis.x}${y ? `, ${short(y)}=${c.axis.y}` : ''}`;
         if (!c.valid || !Number.isFinite(c.score)) {
           b.className = 'invalid';
           b.textContent = '–';
@@ -1133,9 +1253,9 @@
           b.textContent = out.objective.fmt(c.score);
           b.title = `${desc}: ${out.objective.label} ${out.objective.fmt(c.score)}, return ${f.pct(c.metrics.totalReturn, 1)}, ${c.metrics.trades} trades`;
         }
-        const isCurrent = c.params[x.key] === current[x.key] && (!y || c.params[y.key] === current[y.key]);
+        const isCurrent = c.axis.x === curX && (!y || c.axis.y === curY);
         if (isCurrent) b.classList.add('current');
-        b.addEventListener('click', () => applyParams(stratId, c.params));
+        b.addEventListener('click', () => applyCell(stratId, c));
         heat.appendChild(b);
       }
     }
@@ -1158,7 +1278,7 @@
     out.top.forEach((c, k) => {
       const tr = document.createElement('tr');
       if (k === 0) tr.className = 'best';
-      const vals = [String(k + 1), String(c.params[x.key]), ...(y ? [String(c.params[y.key])] : []), out.objective.fmt(c.score), f.pct(c.metrics.totalReturn, 1), f.pct(c.metrics.maxDrawdown, 1), f.int(c.metrics.trades)];
+      const vals = [String(k + 1), String(c.axis.x), ...(y ? [String(c.axis.y)] : []), out.objective.fmt(c.score), f.pct(c.metrics.totalReturn, 1), f.pct(c.metrics.maxDrawdown, 1), f.int(c.metrics.trades)];
       if (out.splitTime) {
         vals.push(c.oos ? out.objective.fmt(c.oosScore) : '–', c.oos ? f.pct(c.oos.totalReturn, 1) : '–', c.oos ? f.int(c.oos.trades) : '–');
       }
@@ -1169,8 +1289,8 @@
         tr.appendChild(td);
       });
       tr.tabIndex = 0;
-      tr.addEventListener('click', () => applyParams(stratId, c.params));
-      tr.addEventListener('keydown', (e) => e.key === 'Enter' && applyParams(stratId, c.params));
+      tr.addEventListener('click', () => applyCell(stratId, c));
+      tr.addEventListener('keydown', (e) => e.key === 'Enter' && applyCell(stratId, c));
       tbody.appendChild(tr);
     });
     if (!out.top.length) {
@@ -1183,14 +1303,18 @@
     }
   }
 
-  function applyParams(stratId, params) {
+  // Apply one sweep result: strategy parameters plus any swept execution settings.
+  function applyCell(stratId, c) {
     if (stratId !== state.strategyId) return;
-    state.params[stratId] = Object.assign({}, params);
+    state.params[stratId] = Object.assign({}, c.params);
+    Object.assign(state.settings, c.overrides);
     persistSoon();
     renderParams();
+    renderSettings();
     const res = runBacktest();
     document.querySelectorAll('#optHeat button.current').forEach((b) => b.classList.remove('current'));
-    if (res) $('runStatus').textContent = `Applied ${Object.entries(params).map(([k, v]) => `${k}=${v}`).join(', ')}`;
+    const changed = Object.assign({}, c.params, c.overrides);
+    if (res) $('runStatus').textContent = `Applied ${Object.entries(changed).map(([k, v]) => `${k}=${v}`).join(', ')}`;
   }
 
   // ---------------------------------------------------------------- theme
