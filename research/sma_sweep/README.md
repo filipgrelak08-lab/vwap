@@ -9,7 +9,7 @@ simple moving averages. Produced by `node research/ema_sweep/run.js data.json re
 
 | Pair | Avg CAGR, full history | Avg worst drawdown | Out-of-sample Sharpe |
 |---|---|---|---|
-| Buy and hold | **13.95%** | −62% | 0.79 |
+| Buy and hold | **13.95%** | −67% | 0.79 |
 | 200/250 | 11.14% | −45% | 0.59 |
 | 125/300 | 10.85% | −48% | 0.60 |
 | 150/300 | 10.80% | −45% | 0.68 |
@@ -20,7 +20,7 @@ simple moving averages. Produced by `node research/ema_sweep/run.js data.json re
 
 - No SMA pair beat buy and hold on average. The best earned about 3 percentage points a year less.
 - The most profitable pairs use a long slow average (250–300 days). They are mainly a "stay out of
-  bear markets" filter, cutting the worst drawdown from about −62% to about −44%.
+  bear markets" filter, cutting the worst drawdown from about −67% to about −44%.
 - The best pair differs for every symbol (SPY 200/300, QQQ 60/300, IWM 7/5, DIA 200/250, AAPL 2/30,
   MSFT 100/125), and each barely beats or trails buy and hold. Picking "the best pair" per symbol is
   curve fitting.
