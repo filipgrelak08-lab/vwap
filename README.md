@@ -5,7 +5,8 @@ A local backtester for trading strategies. Run one Python file, open your browse
 - **No installs.** The server uses only the Python standard library; the app is plain HTML/JS.
 - **Strategies are small JavaScript files** in `strategies/`. Edit them in the built-in editor or in your own editor.
 - **Data:** Yahoo Finance (stocks, ETFs, indices, FX, crypto), Binance (crypto), your own CSV files, or the built-in synthetic samples.
-- **Ten example strategies** to start from: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout, MACD trend, and two from a Bitcoin paper (hour-of-day window, N-day high/low; see `research/btc_paper_edges`).
+- **Twelve example strategies** to start from: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout, MACD trend, time-series momentum, Donchian trend ensemble, N-day high/low and hour-of-day window.
+- **A library of tested strategies**: published crypto strategies checked on data they were not tuned on, with verdicts, trader.dev runs and one-click runs (see [Library](#library)).
 - **trader.dev**: connect your trader.dev account to run TradingView Pine scripts on its servers and see the results here (see [trader.dev](#traderdev)).
 
 ## Quick start
@@ -36,7 +37,18 @@ Requirements: Python 3.8+ and a current browser. Live data needs an internet con
    - **Monthly returns**: a calendar heatmap.
    - **Optimize**: sweep one or two strategy parameters or risk settings (e.g. ATR stop × reward:risk). Choose "Optimize on first 70%" to rank settings on the first part of the data and see how the best ones did on the rest.
    - **Code**: the strategy source. `Ctrl/⌘ + Enter` runs, `Ctrl/⌘ + S` saves to `strategies/<name>.js`.
+   - **Library**: strategies tested in `research/`, best first, with how they did out of sample (see below).
    - **trader.dev**: run Pine scripts on trader.dev and browse past runs (see below).
+
+## Library
+
+The **Library** tab lists strategies from published papers that were tested in [`research/strategy_search`](research/strategy_search) and [`research/btc_paper_edges`](research/btc_paper_edges): settings picked on 2015–2021, then judged on 2022 → 2026 on nine coins they had never seen, and confirmed on trader.dev. Each card shows the rules, a verdict (recommended, mixed, didn't hold up), the before/after numbers against buy and hold, and the trader.dev runs per coin.
+
+- **Run here** loads the strategy with its tested settings and BTC-USD data from Yahoo.
+- **Open** shows a trader.dev run (equity curve and trades) in the trader.dev tab; **Buy and hold** shows the same coin held.
+- **Open pine/… on trader.dev** puts the Pine script in the trader.dev editor to re-run it on another coin or period.
+
+Current picks: **Donchian Trend Ensemble** (most upside when a coin trends) and **50-day High Hold** (most consistent, smallest drawdowns). The library is built from the research results by `python3 research/strategy_search/build_library.py` into `research/library.json`.
 
 ## trader.dev
 
@@ -44,7 +56,7 @@ Requirements: Python 3.8+ and a current browser. Live data needs an internet con
 
 1. Get an API key at <https://mcp-api.trader.dev/login> (it starts with `pk_`), paste it into the tab and press **Connect**. The server checks it and saves it to `.traderdev-key` next to `server.py` (owner-only file permissions on macOS and Linux; ignored by git). Or start the server with `TRADERDEV_API_KEY=pk_... python3 server.py`. The key only ever goes to trader.dev.
 2. Pick a script from `pine/` or paste your own, choose symbol, timeframe and dates, and press **Run on trader.dev**. You get the summary, equity curve and every trade, plus a link to trader.dev's full report.
-3. **Past runs** lists your runs from this browser (and the runs from `research/btc_paper_edges`). Click one, or paste any result ID or report link, to open it again. Opening a past run is free.
+3. **Past runs** lists the runs you made from this browser; the research runs are in the Library tab. Click one, or paste any result ID or report link, to open it again. Opening a past run is free.
 
 Things to know: each run costs 1 credit (free accounts get 1,000 a week); trader.dev always trades 100% of equity with 0.05% commission per side and no funding costs; and every run is saved **publicly** on trader.dev under the script's `strategy()` title or the name you give it.
 
@@ -158,7 +170,7 @@ A backtest is a model. It does not include partial fills, borrow costs, funding 
 server.py                 local server: static files, strategy files, Yahoo/Binance proxy, trader.dev client
 strategies/*.js           strategies (one file each)
 pine/*.pine               Pine scripts for the trader.dev tab
-research/                 strategy studies (sweeps, paper replications) with their data and scripts
+research/                 strategy studies (sweeps, paper replications, strategy search) and library.json
 data/                     drop CSV files here
 web/index.html            the app
 web/js/engine.js          strategy compiler and bar-by-bar simulator
@@ -169,6 +181,7 @@ web/js/optimizer.js       parameter sweeps
 web/js/charts.js          charts (TradingView Lightweight Charts)
 web/js/app.js             UI
 web/js/traderdev.js       trader.dev tab
+web/js/library.js         Library tab
 tools/build_standalone.py bundles everything into one HTML file
 tests/                    unit tests
 ```

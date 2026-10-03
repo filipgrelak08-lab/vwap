@@ -31,6 +31,7 @@ class ServerTest(unittest.TestCase):
         server.PINE_DIR.mkdir()
         (server.PINE_DIR / "demo.pine").write_text("//@version=6\nstrategy(\"Demo\")\n", encoding="utf-8")
         server.TRADERDEV_KEY_FILE = root / ".traderdev-key"
+        server.LIBRARY_FILE = root / "library.json"
         cls.env_key = os.environ.pop("TRADERDEV_API_KEY", None)
         cls.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         cls.httpd.verbose = False
@@ -127,6 +128,31 @@ class ServerTest(unittest.TestCase):
         status, body = self.json("GET", "/api/pine")
         self.assertEqual(status, 200)
         self.assertEqual([s["id"] for s in body["scripts"]], ["demo"])
+
+    def test_library(self):
+        server.LIBRARY_FILE.unlink(missing_ok=True)
+        status, body = self.json("GET", "/api/library")
+        self.assertEqual((status, body), (200, {"strategies": []}))
+        server.LIBRARY_FILE.write_text('{"strategies": [{"id": "x"}]}', encoding="utf-8")
+        status, body = self.json("GET", "/api/library")
+        self.assertEqual(body["strategies"][0]["id"], "x")
+        server.LIBRARY_FILE.write_text("{broken", encoding="utf-8")
+        status, body = self.json("GET", "/api/library")
+        self.assertEqual(status, 500)
+        server.LIBRARY_FILE.unlink()
+
+    def test_repo_library_points_at_real_files(self):
+        root = Path(__file__).resolve().parent.parent
+        library = json.loads((root / "research" / "library.json").read_text(encoding="utf-8"))
+        self.assertTrue(library["strategies"])
+        for s in library["strategies"]:
+            self.assertIn(s["verdict"], ("recommended", "mixed", "failed"), s["id"])
+            if s["local"]:
+                self.assertTrue((root / "strategies" / f"{s['local']['strategy']}.js").exists(), s["id"])
+            if s["pine"]:
+                self.assertTrue((root / "pine" / f"{s['pine']}.pine").exists(), s["id"])
+            for run in s["runs"]:
+                self.assertRegex(run["id"], server.TRADERDEV_ID_RE)
 
     def fake_traderdev(self):
         """Replace the trader.dev client with a stub; returns the list of calls it receives."""

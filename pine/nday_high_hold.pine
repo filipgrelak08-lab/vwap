@@ -1,0 +1,19 @@
+//@version=6
+// N-day high hold: hold for the next day whenever today's close is the highest close of the
+// last N days, flat otherwise. The trend leg of Padysak & Vojtko (2022); in the strategy search
+// (research/strategy_search) N = 50 was the best in-sample choice and held up after 2022.
+// Run on a 1D chart.
+strategy("50d High Hold", overlay=true, pyramiding=1, process_orders_on_close=true, commission_type=strategy.commission.percent, commission_value=0.05, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=100, margin_short=100)
+
+lookback = input.int(50, "Lookback (days)", minval=2)
+
+hh = ta.highest(close, lookback)
+atHigh = close >= hh
+
+if atHigh and strategy.position_size == 0
+    strategy.entry("L", strategy.long)
+if not atHigh and strategy.position_size > 0
+    strategy.close("L")
+
+plot(hh, title="N-day high")
+plot(atHigh ? 1 : 0, title="signal")

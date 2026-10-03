@@ -1,0 +1,420 @@
+{
+ "ens|BTCUSDT": {
+  "resultId": "01M420ENV3WP4SA3EGPX5SAN75",
+  "strategyId": "01M420EP2BPKNXNPS0BKS67D88",
+  "name": "Donchian Trend Ensemble \u00b7 BTC",
+  "symbol": "BYBIT:BTCUSDT.P",
+  "fromTs": 1585180800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 322.63403058,
+  "maxDrawdownPct": 52.32348183,
+  "sharpeRatio": 0.83493167,
+  "totalTrades": 58,
+  "profitFactor": 2.10230732,
+  "winRatePct": 37.93103448,
+  "commissionPaid": 1483.03464245,
+  "finalEquity": 42263.40305755001,
+  "createdAt": 1791068952419,
+  "adjust": []
+ },
+ "high|BTCUSDT": {
+  "resultId": "01M420EQNTW6TC8A13TSY8416K",
+  "strategyId": "01M420EQWJ2B9Q1EFK5MEPTZ6M",
+  "name": "50d High Hold \u00b7 BTC",
+  "symbol": "BYBIT:BTCUSDT.P",
+  "fromTs": 1585180800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 108.47199622,
+  "maxDrawdownPct": 39.72633332,
+  "sharpeRatio": 0.67041511,
+  "totalTrades": 124,
+  "profitFactor": 1.50448036,
+  "winRatePct": 33.87096774,
+  "commissionPaid": 1812.59767755,
+  "finalEquity": 20847.199622450004,
+  "createdAt": 1791068954298,
+  "adjust": []
+ },
+ "ens|ETHUSDT": {
+  "resultId": "01M420ESBSQNQG4ARJ71E0ZJF2",
+  "strategyId": "01M420ESGTE5CS01P2KRVB6X8D",
+  "name": "Donchian Trend Ensemble \u00b7 ETH",
+  "symbol": "BYBIT:ETHUSDT.P",
+  "fromTs": 1615852800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 9.1666573,
+  "maxDrawdownPct": 42.36111557,
+  "sharpeRatio": 0.21916105,
+  "totalTrades": 45,
+  "profitFactor": 1.07437916,
+  "winRatePct": 33.33333333,
+  "commissionPaid": 454.41716975,
+  "finalEquity": 10916.665730249993,
+  "createdAt": 1791068956025,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-03-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "high|ETHUSDT": {
+  "resultId": "01M420ETWECQRMHDN5TDWH1HSH",
+  "strategyId": "01M420EV1DVDX4MQWNA4TP8SWY",
+  "name": "50d High Hold \u00b7 ETH",
+  "symbol": "BYBIT:ETHUSDT.P",
+  "fromTs": 1615852800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 21.38359461,
+  "maxDrawdownPct": 21.17076301,
+  "sharpeRatio": 0.29222127,
+  "totalTrades": 88,
+  "profitFactor": 1.16519712,
+  "winRatePct": 27.27272727,
+  "commissionPaid": 931.2899388,
+  "finalEquity": 12138.359461199998,
+  "createdAt": 1791068957583,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-03-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|ETHUSDT": {
+  "resultId": "01M420EWC0GC9CNE7MQZEP9E13",
+  "strategyId": "01M420EWG5XQCR7619FYFG310M",
+  "name": "Buy and hold \u00b7 ETH",
+  "symbol": "BYBIT:ETHUSDT.P",
+  "fromTs": 1615852800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0,
+  "maxDrawdownPct": 79.3433139,
+  "sharpeRatio": 0.46647934,
+  "totalTrades": 0,
+  "profitFactor": 0,
+  "winRatePct": 0,
+  "commissionPaid": 0,
+  "finalEquity": 10000,
+  "createdAt": 1791068959104,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-03-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "ens|SOLUSDT": {
+  "resultId": "01M420EY4Z6YTB02HWGS2XCRQ2",
+  "strategyId": "01M420EYCNJ63WJ3M4DQ12V2T0",
+  "name": "Donchian Trend Ensemble \u00b7 SOL",
+  "symbol": "BYBIT:SOLUSDT.P",
+  "fromTs": 1634342400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 389.60994043,
+  "maxDrawdownPct": 40.57800821,
+  "sharpeRatio": 0.93187046,
+  "totalTrades": 28,
+  "profitFactor": 3.08737179,
+  "winRatePct": 46.42857143,
+  "commissionPaid": 836.6927568,
+  "finalEquity": 48960.9940432,
+  "createdAt": 1791068960927,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-10-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "high|SOLUSDT": {
+  "resultId": "01M420EZTF0H3KJABX0V5KC63Q",
+  "strategyId": "01M420EZYXK2RH1926492XC37Z",
+  "name": "50d High Hold \u00b7 SOL",
+  "symbol": "BYBIT:SOLUSDT.P",
+  "fromTs": 1634342400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 221.81173548,
+  "maxDrawdownPct": 25.23789188,
+  "sharpeRatio": 0.90355636,
+  "totalTrades": 57,
+  "profitFactor": 1.95458426,
+  "winRatePct": 40.35087719,
+  "commissionPaid": 1301.61675235,
+  "finalEquity": 32181.173547650007,
+  "createdAt": 1791068962639,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-10-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|SOLUSDT": {
+  "resultId": "01M420F1CXSZXXRGT469ZMKTZD",
+  "strategyId": "01M420F1HG0EBNZH4EB9WTG3DC",
+  "name": "Buy and hold \u00b7 SOL",
+  "symbol": "BYBIT:SOLUSDT.P",
+  "fromTs": 1634342400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0,
+  "maxDrawdownPct": 96.21386189,
+  "sharpeRatio": 0.43773057,
+  "totalTrades": 0,
+  "profitFactor": 0,
+  "winRatePct": 0,
+  "commissionPaid": 0,
+  "finalEquity": 10000,
+  "createdAt": 1791068964253,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-10-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "ens|LINKUSDT": {
+  "resultId": "01M420F3ANMMZHMW2W9CBQZ9GP",
+  "strategyId": "01M420F3GAN6ZKGTFZ8QW5CXT5",
+  "name": "Donchian Trend Ensemble \u00b7 LINK",
+  "symbol": "BYBIT:LINKUSDT.P",
+  "fromTs": 1603324800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0.38673884,
+  "maxDrawdownPct": 61.56224025,
+  "sharpeRatio": 0.24162373,
+  "totalTrades": 38,
+  "profitFactor": 1.00314892,
+  "winRatePct": 31.57894737,
+  "commissionPaid": 263.44541615,
+  "finalEquity": 10038.673883849997,
+  "createdAt": 1791068966229,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2020-10-22T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "high|LINKUSDT": {
+  "resultId": "01M420F4WTG4YZ9KEVDFVD5ZNR",
+  "strategyId": "01M420F51T1QZGMYFGRGHCE7D4",
+  "name": "50d High Hold \u00b7 LINK",
+  "symbol": "BYBIT:LINKUSDT.P",
+  "fromTs": 1603324800000,
+  "toTs": 1790985600000,
+  "netProfitPct": -52.78745378,
+  "maxDrawdownPct": 67.10438147,
+  "sharpeRatio": -0.32725713,
+  "totalTrades": 81,
+  "profitFactor": 0.66081161,
+  "winRatePct": 32.09876543,
+  "commissionPaid": 501.1481784,
+  "finalEquity": 4721.254621599996,
+  "createdAt": 1791068967834,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2020-10-22T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|LINKUSDT": {
+  "resultId": "01M420F6EBQXH4PE1G0TXTQ6TB",
+  "strategyId": "01M420F6NGN3AWWHE2JKHK2PEQ",
+  "name": "Buy and hold \u00b7 LINK",
+  "symbol": "BYBIT:LINKUSDT.P",
+  "fromTs": 1603324800000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0,
+  "maxDrawdownPct": 90.17927086,
+  "sharpeRatio": 0.51706809,
+  "totalTrades": 0,
+  "profitFactor": 0,
+  "winRatePct": 0,
+  "commissionPaid": 0,
+  "finalEquity": 10000,
+  "createdAt": 1791068969419,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2020-10-22T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "ens|DOGEUSDT": {
+  "resultId": "01M420F839GN8J2JKY3H27AQYH",
+  "strategyId": "01M420F887WYQ466ZBK8RFZBM2",
+  "name": "Donchian Trend Ensemble \u00b7 DOGE",
+  "symbol": "BYBIT:DOGEUSDT.P",
+  "fromTs": 1622678400000,
+  "toTs": 1790985600000,
+  "netProfitPct": -15.73545928,
+  "maxDrawdownPct": 63.7186806,
+  "sharpeRatio": 0.17260034,
+  "totalTrades": 27,
+  "profitFactor": 0.89684357,
+  "winRatePct": 33.33333333,
+  "commissionPaid": 237.96228765,
+  "finalEquity": 8426.45407235,
+  "createdAt": 1791068971113,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-06-03T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "high|DOGEUSDT": {
+  "resultId": "01M420F9J13TNKZ7BJZPCX3N7R",
+  "strategyId": "01M420F9SD5JCWFTP649PTDS2M",
+  "name": "50d High Hold \u00b7 DOGE",
+  "symbol": "BYBIT:DOGEUSDT.P",
+  "fromTs": 1622678400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 579.23474059,
+  "maxDrawdownPct": 27.80342877,
+  "sharpeRatio": 1.06284016,
+  "totalTrades": 38,
+  "profitFactor": 3.40278567,
+  "winRatePct": 50,
+  "commissionPaid": 1049.677690865,
+  "finalEquity": 67923.47405913498,
+  "createdAt": 1791068972609,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-06-03T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|DOGEUSDT": {
+  "resultId": "01M420FB39235CQPT6RVJPDNED",
+  "strategyId": "01M420FB89MYPPWPQB7SEWYFBN",
+  "name": "Buy and hold \u00b7 DOGE",
+  "symbol": "BYBIT:DOGEUSDT.P",
+  "fromTs": 1622678400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0,
+  "maxDrawdownPct": 86.83073375,
+  "sharpeRatio": 0.1671243,
+  "totalTrades": 0,
+  "profitFactor": 0,
+  "winRatePct": 0,
+  "commissionPaid": 0,
+  "finalEquity": 10000,
+  "createdAt": 1791068974185,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-06-03T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "ens|AVAXUSDT": {
+  "resultId": "01M420FCMNSFBPXA0B920P61KQ",
+  "strategyId": "01M420FCRVF3Y4AE3NGHHQGVXS",
+  "name": "Donchian Trend Ensemble \u00b7 AVAX",
+  "symbol": "BYBIT:AVAXUSDT.P",
+  "fromTs": 1631750400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 353.78577249,
+  "maxDrawdownPct": 32.56700585,
+  "sharpeRatio": 1.005796,
+  "totalTrades": 21,
+  "profitFactor": 3.11510332,
+  "winRatePct": 57.14285714,
+  "commissionPaid": 576.7113509,
+  "finalEquity": 45378.577249099995,
+  "createdAt": 1791068975765,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-09-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "high|AVAXUSDT": {
+  "resultId": "01M420FE285Q6NF8JJDVQPSVDB",
+  "strategyId": "01M420FE8MCP25H81VMZD22YP3",
+  "name": "50d High Hold \u00b7 AVAX",
+  "symbol": "BYBIT:AVAXUSDT.P",
+  "fromTs": 1631750400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 88.38450349,
+  "maxDrawdownPct": 29.48939645,
+  "sharpeRatio": 0.53816363,
+  "totalTrades": 57,
+  "profitFactor": 1.5714538,
+  "winRatePct": 42.10526316,
+  "commissionPaid": 673.95055065,
+  "finalEquity": 18838.450349349994,
+  "createdAt": 1791068977225,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-09-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|AVAXUSDT": {
+  "resultId": "01M420FFJT4RW58DF44ERKMW0C",
+  "strategyId": "01M420FFQBW2R9R90FKZBG358E",
+  "name": "Buy and hold \u00b7 AVAX",
+  "symbol": "BYBIT:AVAXUSDT.P",
+  "fromTs": 1631750400000,
+  "toTs": 1790985600000,
+  "netProfitPct": 0,
+  "maxDrawdownPct": 95.61455307,
+  "sharpeRatio": 0.09392768,
+  "totalTrades": 0,
+  "profitFactor": 0,
+  "winRatePct": 0,
+  "commissionPaid": 0,
+  "finalEquity": 10000,
+  "createdAt": 1791068978778,
+  "adjust": [
+   {
+    "field": "from",
+    "requested": "2020-03-26T00:00:00.000Z",
+    "applied": "2021-09-16T00:00:00.000Z",
+    "reason": "clamped_to_clickhouse_first_bar"
+   }
+  ]
+ },
+ "bh|BTCUSDT": {
+  "resultId": "01M41Y93V9F39HHRD28CHEPK54",
+  "name": "BTC buy and hold",
+  "symbol": "BYBIT:BTCUSDT.P",
+  "fromTs": 1585180800000,
+  "toTs": 1790985600000
+ }
+}

@@ -386,6 +386,30 @@
     if (src === 'csv') refreshServerCsvs();
   }
 
+  // Open a strategy from the Library tab: select it with its tested parameters and load its data.
+  async function runLocal(spec) {
+    if (!state.strategies.some((s) => s.id === spec.strategy)) {
+      setLoadStatus(`There is no strategies/${spec.strategy}.js to run.`, true);
+      return;
+    }
+    state.params[spec.strategy] = Object.assign({}, spec.params || {});
+    selectTab('chart');
+    selectStrategy(spec.strategy);
+    const d = spec.data;
+    if (d && d.source === 'yahoo' && state.server) {
+      $('yahooSymbol').value = d.symbol;
+      $('yahooInterval').value = d.interval;
+      $('yahooRange').value = d.range;
+      selectSource('yahoo');
+      persist();
+      await loadWith(() => BT.data.loadYahoo({ symbol: d.symbol, interval: d.interval, range: d.range, adjusted: $('yahooAdjusted').checked }), `${d.symbol} from Yahoo`);
+    } else if (d) {
+      setLoadStatus(`Tested on ${d.symbol} (${d.interval}). Load that data to compare; live data needs the local server.`);
+    }
+  }
+
+  BT.app = { runLocal };
+
   // ---------------------------------------------------------------- settings
 
   const SETTING_IDS = [
@@ -768,7 +792,7 @@
 
   // ---------------------------------------------------------------- tabs
 
-  const TABS = ['chart', 'trades', 'monthly', 'optimize', 'code', 'traderdev'];
+  const TABS = ['chart', 'trades', 'monthly', 'optimize', 'code', 'library', 'traderdev'];
 
   function selectTab(tab) {
     if (!TABS.includes(tab)) tab = 'chart';
@@ -781,6 +805,7 @@
     }
     if (tab === 'code') refreshGutter();
     if (tab === 'traderdev') BT.traderdev.show();
+    if (tab === 'library') BT.library.show();
   }
 
   // ---------------------------------------------------------------- code editor
@@ -1502,7 +1527,8 @@
     renderSettings();
     state.server = await detectServer();
     renderEnv();
-    BT.traderdev.init({ server: state.server, kpi });
+    BT.traderdev.init({ server: state.server, kpi, selectTab });
+    BT.library.init({ server: state.server, selectTab });
     try {
       await loadStrategies();
     } catch (e) {

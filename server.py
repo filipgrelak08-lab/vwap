@@ -35,6 +35,7 @@ WEB_DIR = ROOT / "web"
 STRATEGY_DIR = ROOT / "strategies"
 DATA_DIR = ROOT / "data"
 PINE_DIR = ROOT / "pine"
+LIBRARY_FILE = ROOT / "research" / "library.json"
 TRADERDEV_KEY_FILE = ROOT / ".traderdev-key"
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -422,6 +423,16 @@ def traderdev_result(result_id):
     return {"id": result_id, "reportUrl": TRADERDEV_REPORT.format(result_id), "trades": trades, "equity": equity}
 
 
+def load_library():
+    """Tested strategies for the Library tab (built by research/strategy_search/build_library.py)."""
+    try:
+        return json.loads(LIBRARY_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"strategies": []}
+    except ValueError:
+        raise ApiError("research/library.json is not valid JSON.", 500)
+
+
 def list_pine():
     if not PINE_DIR.exists():
         return []
@@ -591,6 +602,9 @@ class Handler(SimpleHTTPRequestHandler):
 
         if route == "pine" and method == "GET" and len(parts) == 1:
             return self._send_json({"scripts": list_pine()})
+
+        if route == "library" and method == "GET" and len(parts) == 1:
+            return self._send_json(load_library())
 
         if route == "traderdev":
             sub = parts[1] if len(parts) > 1 else ""

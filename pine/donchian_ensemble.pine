@@ -1,0 +1,136 @@
+//@version=6
+// Zarattini, Pagani & Barbon (2025), "Catching Crypto Trends": nine Donchian trend systems
+// (5 to 360 days). Each goes long when the close beats the highest close of the previous n days,
+// and exits on a close below its trailing stop: the higher of the old stop and the channel
+// midpoint. The paper sizes by the share of systems that are long; this engine trades all or
+// nothing, so it holds while at least `vote` of the nine are long. Run on a 1D chart.
+strategy("Donchian Trend Ensemble", overlay=true, pyramiding=1, process_orders_on_close=true, commission_type=strategy.commission.percent, commission_value=0.05, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=100, margin_short=100)
+
+vote = input.float(0.5, "Hold when this share of systems is long", minval=0.1, maxval=1.0, step=0.05)
+
+// 5 days
+var bool on1 = false
+var float stop1 = na
+hi1 = ta.highest(close, 5)
+mid1 = (hi1 + ta.lowest(close, 5)) / 2
+if not on1 and close > hi1[1]
+    on1 := true
+    stop1 := mid1
+else if on1
+    stop1 := math.max(stop1, mid1)
+    if close < stop1
+        on1 := false
+
+// 10 days
+var bool on2 = false
+var float stop2 = na
+hi2 = ta.highest(close, 10)
+mid2 = (hi2 + ta.lowest(close, 10)) / 2
+if not on2 and close > hi2[1]
+    on2 := true
+    stop2 := mid2
+else if on2
+    stop2 := math.max(stop2, mid2)
+    if close < stop2
+        on2 := false
+
+// 20 days
+var bool on3 = false
+var float stop3 = na
+hi3 = ta.highest(close, 20)
+mid3 = (hi3 + ta.lowest(close, 20)) / 2
+if not on3 and close > hi3[1]
+    on3 := true
+    stop3 := mid3
+else if on3
+    stop3 := math.max(stop3, mid3)
+    if close < stop3
+        on3 := false
+
+// 30 days
+var bool on4 = false
+var float stop4 = na
+hi4 = ta.highest(close, 30)
+mid4 = (hi4 + ta.lowest(close, 30)) / 2
+if not on4 and close > hi4[1]
+    on4 := true
+    stop4 := mid4
+else if on4
+    stop4 := math.max(stop4, mid4)
+    if close < stop4
+        on4 := false
+
+// 60 days
+var bool on5 = false
+var float stop5 = na
+hi5 = ta.highest(close, 60)
+mid5 = (hi5 + ta.lowest(close, 60)) / 2
+if not on5 and close > hi5[1]
+    on5 := true
+    stop5 := mid5
+else if on5
+    stop5 := math.max(stop5, mid5)
+    if close < stop5
+        on5 := false
+
+// 90 days
+var bool on6 = false
+var float stop6 = na
+hi6 = ta.highest(close, 90)
+mid6 = (hi6 + ta.lowest(close, 90)) / 2
+if not on6 and close > hi6[1]
+    on6 := true
+    stop6 := mid6
+else if on6
+    stop6 := math.max(stop6, mid6)
+    if close < stop6
+        on6 := false
+
+// 150 days
+var bool on7 = false
+var float stop7 = na
+hi7 = ta.highest(close, 150)
+mid7 = (hi7 + ta.lowest(close, 150)) / 2
+if not on7 and close > hi7[1]
+    on7 := true
+    stop7 := mid7
+else if on7
+    stop7 := math.max(stop7, mid7)
+    if close < stop7
+        on7 := false
+
+// 250 days
+var bool on8 = false
+var float stop8 = na
+hi8 = ta.highest(close, 250)
+mid8 = (hi8 + ta.lowest(close, 250)) / 2
+if not on8 and close > hi8[1]
+    on8 := true
+    stop8 := mid8
+else if on8
+    stop8 := math.max(stop8, mid8)
+    if close < stop8
+        on8 := false
+
+// 360 days
+var bool on9 = false
+var float stop9 = na
+hi9 = ta.highest(close, 360)
+mid9 = (hi9 + ta.lowest(close, 360)) / 2
+if not on9 and close > hi9[1]
+    on9 := true
+    stop9 := mid9
+else if on9
+    stop9 := math.max(stop9, mid9)
+    if close < stop9
+        on9 := false
+
+longCount = (on1 ? 1 : 0) + (on2 ? 1 : 0) + (on3 ? 1 : 0) + (on4 ? 1 : 0) + (on5 ? 1 : 0) + (on6 ? 1 : 0) + (on7 ? 1 : 0) + (on8 ? 1 : 0) + (on9 ? 1 : 0)
+share = longCount / 9.0
+
+if share >= vote and strategy.position_size == 0
+    strategy.entry("L", strategy.long)
+if share < vote and strategy.position_size > 0
+    strategy.close("L")
+
+plot(share, title="share of systems long")

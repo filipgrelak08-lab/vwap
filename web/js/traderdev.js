@@ -12,17 +12,6 @@
   const MAX_RUNS = 50;
   const ULID_RE = /[0-9A-HJKMNP-TV-Z]{26}/i;
 
-  // The runs from research/btc_paper_edges, so the list has something in it on first use.
-  const W = { symbol: 'BYBIT:BTCUSDT.P', fromTs: 1585180800000, toTs: 1790985600000, initialCapital: 10000 };
-  const SEED_RUNS = [
-    { ...W, id: '01M41Y4GPYQ05Q5BFMFPBP96MH', name: 'BTC Seasonality 21-23 UTC', timeframe: '1h', returnPct: -54.48, maxDdPct: 65.86, sharpe: -0.67, trades: 2377, profitFactor: 0.91, winRatePct: 44.76, commission: 19453, finalEquity: 4552, ranAt: 1791066522335 },
-    { ...W, id: '01M41Y808VYDKDX225QVEBBMJZ', name: 'BTC Seasonality 22-24 UTC', timeframe: '1h', returnPct: -88.03, maxDdPct: 88.11, sharpe: -1.95, trades: 2378, profitFactor: 0.75, winRatePct: 42.01, commission: 9722, finalEquity: 1197, ranAt: 1791066636572 },
-    { ...W, id: '01M41Y8EAPAMD32PCS12Y1N3Q8', name: 'BTC 10d MAX+MIN', timeframe: '1D', returnPct: 499.91, maxDdPct: 51.88, sharpe: 0.94, trades: 432, profitFactor: 1.24, winRatePct: 49.77, commission: 17551, finalEquity: 59991, ranAt: 1791066650966 },
-    { ...W, id: '01M41Y8ZVSHME7R13GRTCG47B1', name: 'BTC 10d MAX only', timeframe: '1D', returnPct: 257.75, maxDdPct: 23.61, sharpe: 0.91, trades: 242, profitFactor: 1.41, winRatePct: 32.23, commission: 5611, finalEquity: 35775, ranAt: 1791066668921 },
-    { ...W, id: '01M41Y91YQG9V0MK9Y8XV2YPK7', name: 'BTC 10d MIN only', timeframe: '1D', returnPct: 67.07, maxDdPct: 46.04, sharpe: 0.43, trades: 193, profitFactor: 1.16, winRatePct: 70.98, commission: 3323, finalEquity: 16707, ranAt: 1791066671063 },
-    { ...W, id: '01M41Y93V9F39HHRD28CHEPK54', name: 'BTC buy and hold', timeframe: '1D', returnPct: 1152.69, maxDdPct: 76.68, sharpe: 0.96, trades: 0, profitFactor: NaN, winRatePct: NaN, commission: 5, finalEquity: 125269, ranAt: 1791066673001 },
-  ];
-
   const store = {
     get(key, fallback) {
       try {
@@ -46,7 +35,10 @@
     kpi: null,
     started: false,
     connected: false,
-    runs: store.get(RUNS_KEY, null) || SEED_RUNS.slice(),
+    runs: store.get(RUNS_KEY, []),
+    known: {}, // summaries of runs opened from the Library tab
+    selectTab: null,
+    templatesReady: null,
     shownId: null,
     busy: false,
   };
@@ -364,13 +356,17 @@
   }
 
   async function openRun(id, doneMessage) {
-    const rec = td.runs.find((r) => r.id === id);
+    const known = td.known[id];
+    const rec = td.runs.find((r) => r.id === id) || (known && Number.isFinite(known.returnPct) ? known : null);
     setRunStatus(`Loading result ${id}…`);
     // a brand-new result file can take a moment to appear
     for (let attempt = 0; ; attempt++) {
       try {
         const blob = await api('GET', `api/traderdev/results/${encodeURIComponent(id)}`);
-        renderResult(rec || summaryFromBlob(id, blob), blob);
+        // no stored summary: work it out from the result file, keeping any name we were given
+        const labels = {};
+        for (const k of ['name', 'symbol', 'timeframe']) if (known && known[k]) labels[k] = known[k];
+        renderResult(rec || Object.assign(summaryFromBlob(id, blob), labels), blob);
         setRunStatus(doneMessage || '');
         $('tdResultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
         return;
@@ -389,6 +385,15 @@
     const f = BT.fmt;
     const tbody = $('tdRuns').querySelector('tbody');
     tbody.textContent = '';
+    if (!td.runs.length) {
+      const tr = document.createElement('tr');
+      const c = document.createElement('td');
+      c.colSpan = 8;
+      c.className = 'empty';
+      c.textContent = 'No runs from this browser yet. The tested strategies and their trader.dev runs are in the Library tab.';
+      tr.appendChild(c);
+      tbody.appendChild(tr);
+    }
     for (const r of td.runs) {
       const tr = document.createElement('tr');
       if (r.id === td.shownId) tr.className = 'best';
@@ -448,9 +453,27 @@
     $('tdOpenForm').addEventListener('submit', openFromInput);
   }
 
+  // ---------------------------------------------------------------- used by the Library tab
+
+  function openResult(rec) {
+    td.known[rec.id] = rec;
+    td.selectTab('traderdev');
+    if (td.server) openRun(rec.id);
+  }
+
+  async function loadPine(id) {
+    td.selectTab('traderdev');
+    if (!td.server) return;
+    await td.templatesReady;
+    $('tdTemplate').value = id;
+    useTemplate(id);
+    $('tdPine').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   function init(opts) {
     td.server = !!opts.server;
     td.kpi = opts.kpi;
+    td.selectTab = opts.selectTab;
     bind();
     renderRuns();
     $('tdServerNotice').hidden = td.server;
@@ -463,8 +486,8 @@
     if (td.started || !td.server) return;
     td.started = true;
     refreshStatus();
-    loadTemplates();
+    td.templatesReady = loadTemplates();
   }
 
-  BT.traderdev = { init, show, tfLabel };
+  BT.traderdev = { init, show, tfLabel, openResult, loadPine };
 })(typeof window !== 'undefined' ? window : globalThis);

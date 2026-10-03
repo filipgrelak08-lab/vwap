@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 STRATEGIES = ROOT / "strategies"
+LIBRARY = ROOT / "research" / "library.json"
 CHART_CDN = "https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"
 
 
@@ -49,6 +50,8 @@ def build(fragment):
         if re.match(r"^[A-Za-z0-9_-]{1,64}$", p.stem)
     ]
     boot = "window.BT_PREVIEW = true;\nwindow.BT_BUNDLED_STRATEGIES = " + json.dumps(strategies, indent=0) + ";"
+    if LIBRARY.exists():  # the Library tab works offline too
+        boot += "\nwindow.BT_LIBRARY = " + json.dumps(json.loads(LIBRARY.read_text(encoding="utf-8")), ensure_ascii=False) + ";"
 
     scripts = [f"<script>{inline_js(boot)}</script>"]
     for f in js_files:

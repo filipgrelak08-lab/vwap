@@ -475,6 +475,31 @@ input[type="password"] {
 .td-open { display: flex; gap: 8px; }
 .td-open input { flex: 1 1 auto; }
 
+/* library tab */
+.lib-filter { max-width: 560px; }
+.lib-filter button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.lib-list { display: flex; flex-direction: column; gap: 14px; }
+.lib-card { border-left: 3px solid var(--line); }
+.lib-card[data-verdict="recommended"] { border-left-color: var(--good); }
+.lib-card[data-verdict="mixed"] { border-left-color: var(--vwap); }
+.lib-card[data-verdict="failed"] { border-left-color: var(--bad); }
+.verdict { font: 600 11px/1 var(--font-display); text-transform: uppercase; letter-spacing: 0.08em; padding: 5px 9px; border-radius: 999px; white-space: nowrap; }
+.verdict.recommended { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.verdict.mixed { color: var(--ink-2); background: var(--warn-bg); }
+.verdict.failed { color: var(--bad); background: var(--bad-bg); }
+.lib-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 18px; }
+.lib-body > *, .lib-runs { min-width: 0; }
+.lib-card h4 { margin: 0 0 6px; font: 600 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-2); }
+.lib-rules ol { margin: 0 0 8px; padding-left: 18px; font-size: 13px; color: var(--ink); display: flex; flex-direction: column; gap: 4px; line-height: 1.45; }
+.lib-rules .hint { margin-top: 6px; }
+.lib-rules a { color: var(--accent); }
+.lib-table td, .lib-table th { padding: 6px 8px; }
+.lib-table tbody tr { cursor: default; }
+.lib-table td:first-child { white-space: normal; min-width: 180px; }
+.lib-run-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.lib-actions { align-items: center; }
+.lib-actions .btn { flex: none; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .code-layout { grid-template-columns: 1fr; }
@@ -482,6 +507,7 @@ input[type="password"] {
   .api-card { position: static; max-height: none; }
   .td-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .td-fields .td-name { grid-column: 1 / -1; }
+  .lib-body { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 960px) {
   .app { display: block; height: auto; }

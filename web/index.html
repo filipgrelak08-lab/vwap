@@ -256,6 +256,7 @@
       <button type="button" role="tab" id="tab-monthly" data-tab="monthly" aria-selected="false">Monthly returns</button>
       <button type="button" role="tab" id="tab-optimize" data-tab="optimize" aria-selected="false">Optimize</button>
       <button type="button" role="tab" id="tab-code" data-tab="code" aria-selected="false">Code</button>
+      <button type="button" role="tab" id="tab-library" data-tab="library" aria-selected="false">Library</button>
       <button type="button" role="tab" id="tab-traderdev" data-tab="traderdev" aria-selected="false">trader.dev</button>
     </nav>
 
@@ -483,6 +484,25 @@
       </div>
     </section>
 
+    <!-- Library -->
+    <section class="tab-panel" data-panel="library" role="tabpanel" aria-labelledby="tab-library" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h3>Tested strategies</h3>
+          <span class="hint inline" id="libUpdated"></span>
+        </div>
+        <ul class="insights" id="libMethod"></ul>
+        <div class="seg lib-filter" role="tablist" id="libFilter" aria-label="Filter by verdict">
+          <button type="button" role="tab" data-filter="all" aria-selected="true">All <span class="count">0</span></button>
+          <button type="button" role="tab" data-filter="recommended" aria-selected="false">Recommended <span class="count">0</span></button>
+          <button type="button" role="tab" data-filter="mixed" aria-selected="false">Mixed <span class="count">0</span></button>
+          <button type="button" role="tab" data-filter="failed" aria-selected="false">Didn’t hold up <span class="count">0</span></button>
+        </div>
+      </div>
+      <div class="lib-list" id="libList"></div>
+      <p class="empty" id="libEmpty" hidden>No tested strategies yet. Build them with <code>python3 research/strategy_search/build_library.py</code>.</p>
+    </section>
+
     <!-- trader.dev -->
     <section class="tab-panel" data-panel="traderdev" role="tabpanel" aria-labelledby="tab-traderdev" hidden>
       <p class="notice" id="tdServerNotice" hidden>trader.dev runs through the local server. Run <code>python3 server.py</code> and open <code>http://localhost:8000</code>.</p>
@@ -594,6 +614,7 @@
 <script src="js/optimizer.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/traderdev.js"></script>
+<script src="js/library.js"></script>
 <script src="js/app.js"></script>
 <!-- /build:js -->
 </body>
