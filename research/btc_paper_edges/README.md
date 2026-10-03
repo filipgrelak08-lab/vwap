@@ -22,7 +22,7 @@ None of the reported numbers include trading costs.
 1. **Coinbase BTC-USD spot, hourly, 2015 → 3 Oct 2026** (98,179 bars). This covers the paper's own sample, to check
    the replication, and the 4.7 years since it was posted, which the authors could not have seen.
 2. **trader.dev backtests on the Bybit BTCUSDT perpetual**, Mar 2020 → 3 Oct 2026 (the history it has), using the
-   Pine scripts in `pine/`. trader.dev always charges 0.05% per side, 100% of equity, fills at bar close.
+   Pine scripts in the repo's top-level `pine/` folder (also runnable from the app's trader.dev tab). trader.dev always charges 0.05% per side, 100% of equity, fills at bar close.
 
 "paper" = 26 Nov 2015 – 3 Feb 2022 (Coinbase) or 26 Mar 2020 – 3 Feb 2022 (trader.dev). "after" = 4 Feb 2022 – 3 Oct 2026.
 Costs: taker 0.05%/side (≈ Bybit perp taker), maker 0.02%/side.
@@ -101,7 +101,8 @@ Full window, Mar 2020 – Oct 2026, 0.05%/side:
 | `coinbase_seasonality.csv` | 21–23 and 22–24 UTC strategies, both periods, no / maker / taker costs |
 | `coinbase_max_min.csv` | MAX, MIN and MAX+MIN for lookbacks 10–50, both periods, with and without costs, plus buy and hold |
 | `traderdev_runs.csv` | The trader.dev runs above split into paper / after, with gross (pre-fee) returns |
-| `pine/*.pine` | The Pine v6 scripts run on trader.dev (also work in TradingView) |
+| `../../pine/*.pine` | The Pine v6 scripts run on trader.dev (also work in TradingView) |
+| `../../strategies/hour_window.js`, `nday_high_low.js` | The same rules as VWAP Lab strategies, to run locally on any data |
 | `fetch_coinbase.py`, `analyze.py` | Re-run it: `python3 research/btc_paper_edges/fetch_coinbase.py btc_usd_1h.csv` then `python3 research/btc_paper_edges/analyze.py btc_usd_1h.csv` |
 
 Data downloaded 2026-10-03.

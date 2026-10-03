@@ -27,6 +27,11 @@ class ServerTest(unittest.TestCase):
         (server.STRATEGY_DIR / "alpha.js").write_text("export default { name: 'Alpha', onBar() {} };\n", encoding="utf-8")
         (server.DATA_DIR / "prices.csv").write_text("Date,Close\n2024-01-02,1\n", encoding="utf-8")
         (server.DATA_DIR / "notes.md").write_text("not data", encoding="utf-8")
+        server.PINE_DIR = root / "pine"
+        server.PINE_DIR.mkdir()
+        (server.PINE_DIR / "demo.pine").write_text("//@version=6\nstrategy(\"Demo\")\n", encoding="utf-8")
+        server.TRADERDEV_KEY_FILE = root / ".traderdev-key"
+        cls.env_key = os.environ.pop("TRADERDEV_API_KEY", None)
         cls.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         cls.httpd.verbose = False
         cls.httpd.allow_any_host = False
@@ -38,6 +43,8 @@ class ServerTest(unittest.TestCase):
         cls.httpd.shutdown()
         cls.httpd.server_close()
         cls.tmp.cleanup()
+        if cls.env_key is not None:
+            os.environ["TRADERDEV_API_KEY"] = cls.env_key
 
     def request(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
@@ -115,6 +122,105 @@ class ServerTest(unittest.TestCase):
         self.assertIn("error", body)
         status, body = self.json("GET", "/api/binance?symbol=BTCUSDT&interval=7m&bars=100")
         self.assertEqual(status, 400)
+
+    def test_pine_scripts(self):
+        status, body = self.json("GET", "/api/pine")
+        self.assertEqual(status, 200)
+        self.assertEqual([s["id"] for s in body["scripts"]], ["demo"])
+
+    def fake_traderdev(self):
+        """Replace the trader.dev client with a stub; returns the list of calls it receives."""
+        calls = []
+
+        def fake(tool, args=None, key=None):
+            calls.append((tool, args, key))
+            answers = {
+                "whoami": {"email": "me@example.com", "displayTier": "free"},
+                "get_credits": {"balance": 7},
+                "quick_backtest": {"resultId": "01ABCDEFGHJKMNPQRSTVWXYZ00", "result": {"netProfitPct": 1.5}},
+            }
+            return answers[tool]
+
+        original = server.traderdev_call
+        server.traderdev_call = fake
+        self.addCleanup(setattr, server, "traderdev_call", original)
+        return calls
+
+    def test_traderdev_not_connected(self):
+        server.TRADERDEV_KEY_FILE.unlink(missing_ok=True)
+        status, body = self.json("GET", "/api/traderdev/status")
+        self.assertEqual((status, body), (200, {"connected": False}))
+        status, body = self.json("POST", "/api/traderdev/backtest", {"pineSource": "x", "symbol": "BTCUSDT", "timeframe": "1D"})
+        self.assertEqual(status, 401)
+        self.assertIn("API key", body["error"])
+
+    def test_traderdev_key_roundtrip(self):
+        calls = self.fake_traderdev()
+        status, _ = self.json("PUT", "/api/traderdev/key", {"key": "not-a-key"})
+        self.assertEqual(status, 400)
+        self.assertFalse(server.TRADERDEV_KEY_FILE.exists())
+        status, body = self.json("PUT", "/api/traderdev/key", {"key": "pk_abcdefgh12345"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body["connected"], body["email"], body["credits"], body["source"]), (True, "me@example.com", 7, "file"))
+        self.assertEqual(server.TRADERDEV_KEY_FILE.read_text(encoding="utf-8").strip(), "pk_abcdefgh12345")
+        if os.name == "posix":
+            self.assertEqual(server.TRADERDEV_KEY_FILE.stat().st_mode & 0o777, 0o600)
+        self.assertIn(("whoami", None, "pk_abcdefgh12345"), calls)
+        status, body = self.json("DELETE", "/api/traderdev/key")
+        self.assertEqual((status, body["connected"]), (200, False))
+        self.assertFalse(server.TRADERDEV_KEY_FILE.exists())
+
+    def test_traderdev_backtest_validation(self):
+        calls = self.fake_traderdev()
+        good = {"pineSource": "//@version=6", "symbol": "BTCUSDT", "timeframe": "1h", "from": "2024-01-01", "to": "", "name": "Test"}
+        for bad in ({"pineSource": ""}, {"symbol": "BTC USDT"}, {"timeframe": "hourly"}, {"from": "01/02/2024"}):
+            status, body = self.json("POST", "/api/traderdev/backtest", dict(good, **bad))
+            self.assertEqual(status, 400, (bad, body))
+        self.assertEqual(calls, [])
+        status, body = self.json("POST", "/api/traderdev/backtest", good)
+        self.assertEqual((status, body["resultId"]), (200, "01ABCDEFGHJKMNPQRSTVWXYZ00"))
+        self.assertEqual(calls[-1][:2], ("quick_backtest", {"pineSource": "//@version=6", "symbol": "BTCUSDT", "timeframe": "1h", "from": "2024-01-01", "name": "Test"}))
+
+    def test_traderdev_result_rejects_bad_ids(self):
+        for rid in ("short", "has%20space", "x" * 41):
+            status, _ = self.json("GET", f"/api/traderdev/results/{rid}")
+            self.assertEqual(status, 400, rid)
+
+    def test_traderdev_reads_event_stream_answers(self):
+        class Resp:
+            def __init__(self, body, sid="s1"):
+                self.body, self.headers = body.encode(), {"Mcp-Session-Id": sid}
+
+            def read(self):
+                return self.body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            msg = json.loads(req.data)
+            if msg.get("method") == "initialize":
+                return Resp('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n')
+            if "id" not in msg:
+                return Resp("")
+            content = [{"type": "text", "text": "tip for the user"}, {"type": "text", "text": '{"balance": 42}'}]
+            return Resp("event: message\ndata: " + json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"content": content}}) + "\n\n")
+
+        original = server.urllib.request.urlopen
+        server.urllib.request.urlopen = fake_urlopen
+        self.addCleanup(setattr, server.urllib.request, "urlopen", original)
+        server._td_sessions.clear()
+        self.assertEqual(server.traderdev_call("get_credits", key="pk_test12345678"), {"balance": 42})
+
+    @unittest.skipUnless(NETWORK, "set VWAPLAB_NETWORK_TESTS=1 to run")
+    def test_traderdev_result_live(self):
+        status, body = self.json("GET", "/api/traderdev/results/01M41Y8ZVSHME7R13GRTCG47B1")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(body["trades"]), 242)
+        self.assertGreater(len(body["equity"]), 100)
 
     @unittest.skipUnless(NETWORK, "set VWAPLAB_NETWORK_TESTS=1 to run")
     def test_yahoo_live(self):

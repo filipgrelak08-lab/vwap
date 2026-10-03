@@ -256,6 +256,7 @@
       <button type="button" role="tab" id="tab-monthly" data-tab="monthly" aria-selected="false">Monthly returns</button>
       <button type="button" role="tab" id="tab-optimize" data-tab="optimize" aria-selected="false">Optimize</button>
       <button type="button" role="tab" id="tab-code" data-tab="code" aria-selected="false">Code</button>
+      <button type="button" role="tab" id="tab-traderdev" data-tab="traderdev" aria-selected="false">trader.dev</button>
     </nav>
 
     <!-- Chart -->
@@ -481,6 +482,104 @@
         </aside>
       </div>
     </section>
+
+    <!-- trader.dev -->
+    <section class="tab-panel" data-panel="traderdev" role="tabpanel" aria-labelledby="tab-traderdev" hidden>
+      <p class="notice" id="tdServerNotice" hidden>trader.dev runs through the local server. Run <code>python3 server.py</code> and open <code>http://localhost:8000</code>.</p>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>trader.dev account</h3>
+          <span class="td-status" id="tdStatus" data-state="off">Not connected</span>
+        </div>
+        <form class="td-key" id="tdKeyForm">
+          <label class="field"><span>API key</span><input type="password" id="tdKey" placeholder="pk_…" autocomplete="off" spellcheck="false"></label>
+          <button type="submit" class="btn primary" id="tdConnectBtn">Connect</button>
+        </form>
+        <div class="btn-row td-connected" id="tdConnectedRow" hidden>
+          <button type="button" class="btn ghost small" id="tdRefreshBtn">Refresh</button>
+          <button type="button" class="btn ghost small danger" id="tdDisconnectBtn">Disconnect</button>
+        </div>
+        <p class="hint">Get a key at <a href="https://mcp-api.trader.dev/login" target="_blank" rel="noopener">mcp-api.trader.dev/login</a>. The server keeps it in <code>.traderdev-key</code> next to <code>server.py</code> (or set <code>TRADERDEV_API_KEY</code>) and only sends it to trader.dev.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Run a Pine strategy on trader.dev</h3>
+          <div class="card-tools">
+            <label class="field td-inline"><span>Start from</span><select id="tdTemplate"></select></label>
+          </div>
+        </div>
+        <div class="td-fields">
+          <label class="field"><span>Symbol</span><input type="text" id="tdSymbol" value="BTCUSDT" autocomplete="off" spellcheck="false" placeholder="BTCUSDT, ETHUSDT, EURUSD"></label>
+          <label class="field"><span>Timeframe</span>
+            <select id="tdTimeframe">
+              <option value="1m">1 minute</option>
+              <option value="5m">5 minutes</option>
+              <option value="15m">15 minutes</option>
+              <option value="30m">30 minutes</option>
+              <option value="1h">1 hour</option>
+              <option value="4h">4 hours</option>
+              <option value="1D" selected>1 day</option>
+            </select>
+          </label>
+          <label class="field"><span>From</span><input type="date" id="tdFrom"></label>
+          <label class="field"><span>To</span><input type="date" id="tdTo"></label>
+          <label class="field td-name"><span>Name on trader.dev (optional)</span><input type="text" id="tdName" autocomplete="off" placeholder="Taken from strategy() if empty"></label>
+        </div>
+        <div class="editor td-editor">
+          <pre class="gutter" id="tdGutter" aria-hidden="true">1</pre>
+          <textarea id="tdPine" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Pine script" wrap="off"></textarea>
+        </div>
+        <div class="opt-run">
+          <button type="button" class="btn primary" id="tdRunBtn">Run on trader.dev</button>
+          <span class="hint inline" id="tdRunStatus" role="status" aria-live="polite"></span>
+        </div>
+        <p class="hint">Pine Script v6 strategies on Bybit USDT perpetuals or forex pairs. Each run costs 1 credit, always trades 100% of equity with 0.05% commission per side, and is saved publicly on trader.dev.</p>
+      </div>
+
+      <div class="card" id="tdResultCard" hidden>
+        <div class="card-head">
+          <h3 id="tdResultTitle">Result</h3>
+          <div class="card-tools"><a class="btn ghost small" id="tdReportLink" href="#" target="_blank" rel="noopener">Full report on trader.dev ↗</a></div>
+        </div>
+        <p class="hint" id="tdResultSub"></p>
+        <div class="kpis" id="tdKpis"></div>
+        <figure class="td-chart">
+          <figcaption>Equity</figcaption>
+          <div id="tdEquity"></div>
+        </figure>
+        <div class="card-head"><h3>Trades <span class="count" id="tdTradeCount">0</span></h3></div>
+        <div class="table-wrap td-trades">
+          <table class="data-table" id="tdTrades">
+            <thead><tr>
+              <th>#</th><th>Side</th><th>Entry (UTC)</th><th class="num">Entry price</th><th>Exit (UTC)</th><th class="num">Exit price</th>
+              <th class="num">P&amp;L</th><th class="num">Return</th><th class="num">Fees</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Past runs</h3>
+          <span class="hint inline">Opening a past run is free.</span>
+        </div>
+        <form class="td-open" id="tdOpenForm">
+          <input type="text" id="tdOpenId" autocomplete="off" spellcheck="false" placeholder="Result ID or trader.dev report link">
+          <button type="submit" class="btn small">Open</button>
+        </form>
+        <div class="table-wrap">
+          <table class="data-table" id="tdRuns">
+            <thead><tr>
+              <th>Strategy</th><th>Market</th><th>Period</th><th class="num">Return</th><th class="num">Max DD</th><th class="num">Sharpe</th><th class="num">Trades</th><th>Run</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 <!-- /build:body -->
@@ -494,6 +593,7 @@
 <script src="js/data.js"></script>
 <script src="js/optimizer.js"></script>
 <script src="js/charts.js"></script>
+<script src="js/traderdev.js"></script>
 <script src="js/app.js"></script>
 <!-- /build:js -->
 </body>

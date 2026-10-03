@@ -426,5 +426,45 @@
     }
   }
 
-  BT.charts = { init, render, fitAll, focusTrade, setShowMarkers, retheme, scatter };
+  /**
+   * Small static line chart (used for trader.dev equity curves).
+   * points: [{ t (unix seconds), y }]; opts: { label, base (dashed reference level), format(y) }.
+   */
+  function line(container, points, opts) {
+    container.textContent = '';
+    const W = 920;
+    const H = 260;
+    const m = { l: 64, r: 12, t: 10, b: 26 };
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': opts.label || 'Line chart' }, container);
+    if (points.length < 2) {
+      svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'empty-note' }, svg).textContent = 'Not enough data to draw';
+      return;
+    }
+    const ys = points.map((p) => p.y).concat(Number.isFinite(opts.base) ? [opts.base] : []);
+    let y0 = Math.min(...ys);
+    let y1 = Math.max(...ys);
+    const padY = (y1 - y0 || 1) * 0.06;
+    y0 -= padY;
+    y1 += padY;
+    const t0 = points[0].t;
+    const t1 = points[points.length - 1].t;
+    const X = (t) => m.l + ((t - t0) / (t1 - t0 || 1)) * (W - m.l - m.r);
+    const Y = (v) => H - m.b - ((v - y0) / (y1 - y0)) * (H - m.t - m.b);
+    const fmt = opts.format || ((v) => BT.fmt.num(v, 0));
+    for (const t of niceTicks(y0, y1, 5)) {
+      svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), class: 'grid' }, svg);
+      svgEl('text', { x: m.l - 6, y: Y(t) + 3, 'text-anchor': 'end', class: 'tick' }, svg).textContent = fmt(t);
+    }
+    for (let k = 0; k <= 5; k++) {
+      const t = t0 + ((t1 - t0) * k) / 5;
+      const anchor = k === 0 ? 'start' : k === 5 ? 'end' : 'middle';
+      svgEl('text', { x: X(t), y: H - 8, 'text-anchor': anchor, class: 'tick' }, svg).textContent = BT.fmt.date(t);
+    }
+    if (Number.isFinite(opts.base)) svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(opts.base), y2: Y(opts.base), class: 'zero' }, svg);
+    const d = points.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.y).toFixed(1)}`).join(' ');
+    svgEl('path', { d: `${d} L${X(t1).toFixed(1)},${H - m.b} L${X(t0).toFixed(1)},${H - m.b} Z`, class: 'area' }, svg);
+    svgEl('path', { d, class: 'line' }, svg);
+  }
+
+  BT.charts = { init, render, fitAll, focusTrade, setShowMarkers, retheme, scatter, line };
 })(typeof window !== 'undefined' ? window : globalThis);

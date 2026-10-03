@@ -5,7 +5,8 @@ A local backtester for trading strategies. Run one Python file, open your browse
 - **No installs.** The server uses only the Python standard library; the app is plain HTML/JS.
 - **Strategies are small JavaScript files** in `strategies/`. Edit them in the built-in editor or in your own editor.
 - **Data:** Yahoo Finance (stocks, ETFs, indices, FX, crypto), Binance (crypto), your own CSV files, or the built-in synthetic samples.
-- **Eight example strategies** to start from: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
+- **Ten example strategies** to start from: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout, MACD trend, and two from a Bitcoin paper (hour-of-day window, N-day high/low; see `research/btc_paper_edges`).
+- **trader.dev**: connect your trader.dev account to run TradingView Pine scripts on its servers and see the results here (see [trader.dev](#traderdev)).
 
 ## Quick start
 
@@ -35,6 +36,19 @@ Requirements: Python 3.8+ and a current browser. Live data needs an internet con
    - **Monthly returns**: a calendar heatmap.
    - **Optimize**: sweep one or two strategy parameters or risk settings (e.g. ATR stop × reward:risk). Choose "Optimize on first 70%" to rank settings on the first part of the data and see how the best ones did on the rest.
    - **Code**: the strategy source. `Ctrl/⌘ + Enter` runs, `Ctrl/⌘ + S` saves to `strategies/<name>.js`.
+   - **trader.dev**: run Pine scripts on trader.dev and browse past runs (see below).
+
+## trader.dev
+
+[trader.dev](https://trader.dev) backtests TradingView Pine Script (v6) strategies on Bybit USDT perpetuals and forex pairs. The **trader.dev** tab connects to it through the local server:
+
+1. Get an API key at <https://mcp-api.trader.dev/login> (it starts with `pk_`), paste it into the tab and press **Connect**. The server checks it and saves it to `.traderdev-key` next to `server.py` (owner-only file permissions on macOS and Linux; ignored by git). Or start the server with `TRADERDEV_API_KEY=pk_... python3 server.py`. The key only ever goes to trader.dev.
+2. Pick a script from `pine/` or paste your own, choose symbol, timeframe and dates, and press **Run on trader.dev**. You get the summary, equity curve and every trade, plus a link to trader.dev's full report.
+3. **Past runs** lists your runs from this browser (and the runs from `research/btc_paper_edges`). Click one, or paste any result ID or report link, to open it again. Opening a past run is free.
+
+Things to know: each run costs 1 credit (free accounts get 1,000 a week); trader.dev always trades 100% of equity with 0.05% commission per side and no funding costs; and every run is saved **publicly** on trader.dev under the script's `strategy()` title or the name you give it.
+
+Pine scripts you want to reuse go in `pine/` as `.pine` files. They are separate from the JavaScript strategies in `strategies/`, which run locally in the browser.
 
 ## Risk settings
 
@@ -141,8 +155,10 @@ A backtest is a model. It does not include partial fills, borrow costs, funding 
 ## Project layout
 
 ```
-server.py                 local server: static files, strategy files, Yahoo/Binance proxy
+server.py                 local server: static files, strategy files, Yahoo/Binance proxy, trader.dev client
 strategies/*.js           strategies (one file each)
+pine/*.pine               Pine scripts for the trader.dev tab
+research/                 strategy studies (sweeps, paper replications) with their data and scripts
 data/                     drop CSV files here
 web/index.html            the app
 web/js/engine.js          strategy compiler and bar-by-bar simulator
@@ -152,6 +168,7 @@ web/js/data.js            sample data, CSV parser, data loaders
 web/js/optimizer.js       parameter sweeps
 web/js/charts.js          charts (TradingView Lightweight Charts)
 web/js/app.js             UI
+web/js/traderdev.js       trader.dev tab
 tools/build_standalone.py bundles everything into one HTML file
 tests/                    unit tests
 ```

@@ -6,11 +6,13 @@ VWAP Lab: local backtesting server.
 
 Serves the web app in ./web, stores strategies as .js files in ./strategies,
 lists CSV files you drop into ./data, and proxies market data from Yahoo
-Finance and Binance (browsers can't call those APIs directly).
+Finance and Binance (browsers can't call those APIs directly). With a
+trader.dev API key it also runs Pine scripts from ./pine on trader.dev.
 
 Standard library only. Python 3.8+.
 """
 import argparse
+import gzip
 import json
 import os
 import re
@@ -32,6 +34,8 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 STRATEGY_DIR = ROOT / "strategies"
 DATA_DIR = ROOT / "data"
+PINE_DIR = ROOT / "pine"
+TRADERDEV_KEY_FILE = ROOT / ".traderdev-key"
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_. -]{1,128}\.(csv|txt)$", re.IGNORECASE)
@@ -45,6 +49,17 @@ YAHOO_DAILY = {"1d", "5d", "1wk", "1mo", "3mo"}
 YAHOO_RANGES = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
 BINANCE_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"}
 BINANCE_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+
+TRADERDEV_MCP = "https://mcp.trader.dev/mcp"
+TRADERDEV_RESULTS = "https://pub-5880a55c41fd4cd1a11146f4fd522fbe.r2.dev/backtests/{}.json.gz"
+TRADERDEV_REPORT = "https://mcp-api.trader.dev/backtest/{}"
+TRADERDEV_KEY_RE = re.compile(r"^pk_[A-Za-z0-9_-]{8,200}$")
+TRADERDEV_ID_RE = re.compile(r"^[0-9A-Za-z]{10,40}$")
+TRADERDEV_SYMBOL_RE = re.compile(r"^[A-Za-z0-9:._-]{1,40}$")
+TRADERDEV_TF_RE = re.compile(r"^[0-9]{0,4}[mhdwDWM]?$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_PINE_BYTES = 200 * 1024
+TRADE_FIELDS = ("seq", "direction", "entryTime", "entryPrice", "exitTime", "exitPrice", "qty", "profit", "profitPct", "commission", "barsInTrade", "isOpen")
 
 
 class ApiError(Exception):
@@ -207,6 +222,212 @@ def fetch_binance(symbol, interval, count):
     raise last_error or ApiError("Could not reach Binance.", 502)
 
 
+# --------------------------------------------------------------------------- trader.dev
+# trader.dev is an MCP server (JSON-RPC over HTTP). An API key works as a bearer token.
+
+_td_lock = threading.Lock()
+_td_sessions = {}  # api key -> MCP session id
+
+
+class _SessionExpired(Exception):
+    pass
+
+
+def traderdev_key():
+    """(key, where it came from). The TRADERDEV_API_KEY environment variable wins over the key file."""
+    env = os.environ.get("TRADERDEV_API_KEY", "").strip()
+    if env:
+        return env, "env"
+    try:
+        key = TRADERDEV_KEY_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        key = ""
+    return (key, "file") if key else (None, None)
+
+
+def _mcp_post(key, payload, session=None, timeout=120):
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {key}",
+        "MCP-Protocol-Version": "2025-06-18",
+        "User-Agent": f"VWAPLab/{VERSION}",  # trader.dev's firewall blocks python-urllib
+    }
+    if session:
+        headers["Mcp-Session-Id"] = session
+    req = urllib.request.Request(TRADERDEV_MCP, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            sid = resp.headers.get("Mcp-Session-Id")
+            body = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        if session and e.code in (400, 404):
+            raise _SessionExpired()
+        if e.code in (401, 403):
+            raise ApiError("trader.dev refused the request. Check your API key.", 401)
+        raise ApiError(f"trader.dev returned HTTP {e.code}.", 502)
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ApiError(f"Could not reach trader.dev: {getattr(e, 'reason', e)}", 502)
+    if "id" not in payload:  # a notification: nothing comes back
+        return sid, None
+    # answers arrive as JSON or as server-sent events ("data: {...}" lines)
+    chunks = [line[5:].strip() for line in body.splitlines() if line.startswith("data:")] or [body]
+    for chunk in chunks:
+        try:
+            msg = json.loads(chunk)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and msg.get("id") == payload["id"]:
+            return sid, msg
+    raise ApiError("trader.dev sent an answer the server could not read.", 502)
+
+
+def _mcp_session(key):
+    with _td_lock:
+        sid = _td_sessions.get(key)
+    if sid:
+        return sid
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "vwap-lab", "version": VERSION}},
+    }
+    sid, _ = _mcp_post(key, init)
+    if not sid:
+        raise ApiError("trader.dev did not start a session.", 502)
+    _mcp_post(key, {"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
+    with _td_lock:
+        _td_sessions[key] = sid
+    return sid
+
+
+def traderdev_call(tool, args=None, key=None):
+    """Call a trader.dev tool and return the JSON it answers with."""
+    key = key or traderdev_key()[0]
+    if not key:
+        raise ApiError("Connect trader.dev first: paste your API key in the trader.dev tab.", 401)
+    call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args or {}}}
+    for _ in range(2):
+        try:
+            _, msg = _mcp_post(key, call, _mcp_session(key))
+            break
+        except _SessionExpired:
+            with _td_lock:
+                _td_sessions.pop(key, None)
+    else:
+        raise ApiError("Could not start a trader.dev session.", 502)
+    if msg.get("error"):
+        raise ApiError(f"trader.dev: {msg['error'].get('message') or 'request failed'}", 502)
+    result = msg.get("result") or {}
+    texts = [c.get("text", "") for c in result.get("content") or [] if c.get("type") == "text"]
+    if result.get("isError"):
+        text = (texts[0] if texts else "request failed").strip()
+        raise ApiError(f"trader.dev: {text[:600]}", 401 if "API key" in text else 400)
+    for text in texts:  # tips and notes come as plain text; the payload is the JSON item
+        try:
+            return json.loads(text)
+        except ValueError:
+            continue
+    return {"text": "\n".join(texts)}
+
+
+def traderdev_status():
+    key, source = traderdev_key()
+    if not key:
+        return {"connected": False}
+    try:
+        user = traderdev_call("whoami", key=key)
+        credits = traderdev_call("get_credits", key=key)
+    except ApiError as e:
+        if e.status != 401:
+            raise
+        return {"connected": False, "source": source, "error": str(e)}
+    return {
+        "connected": True,
+        "source": source,
+        "email": user.get("email"),
+        "tier": user.get("displayTier") or user.get("tier"),
+        "credits": credits.get("balance"),
+    }
+
+
+def save_traderdev_key(key):
+    key = (key or "").strip() if isinstance(key, str) else ""
+    if not TRADERDEV_KEY_RE.match(key):
+        raise ApiError("That doesn't look like a trader.dev API key (they start with pk_).")
+    if os.environ.get("TRADERDEV_API_KEY", "").strip():
+        raise ApiError("TRADERDEV_API_KEY is set where the server was started, and it takes precedence. Unset it to use a saved key.")
+    traderdev_call("whoami", key=key)  # raises if trader.dev rejects it
+    fd = os.open(TRADERDEV_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(key + "\n")
+
+
+def forget_traderdev_key():
+    if TRADERDEV_KEY_FILE.exists():
+        TRADERDEV_KEY_FILE.unlink()
+    with _td_lock:
+        _td_sessions.clear()
+
+
+def traderdev_backtest(body):
+    pine = body.get("pineSource")
+    if not isinstance(pine, str) or not pine.strip():
+        raise ApiError("Paste a Pine script first.")
+    if len(pine.encode("utf-8")) > MAX_PINE_BYTES:
+        raise ApiError("Pine script is too large.")
+    symbol = str(body.get("symbol") or "").strip()
+    timeframe = str(body.get("timeframe") or "").strip()
+    if not TRADERDEV_SYMBOL_RE.match(symbol):
+        raise ApiError("Enter a symbol such as BTCUSDT or EURUSD.")
+    if not timeframe or not TRADERDEV_TF_RE.match(timeframe):
+        raise ApiError("Enter a timeframe such as 15m, 1h or 1D.")
+    args = {"pineSource": pine, "symbol": symbol, "timeframe": timeframe}
+    for field in ("from", "to"):
+        value = str(body.get(field) or "").strip()
+        if value:
+            if not DATE_RE.match(value):
+                raise ApiError(f"'{field}' must be a date like 2024-01-31.")
+            args[field] = value
+    name = str(body.get("name") or "").strip()
+    if name:
+        args["name"] = name[:255]
+    if body.get("strategyId"):
+        args["strategyId"] = str(body["strategyId"])[:64]
+    out = traderdev_call("quick_backtest", args)
+    if not isinstance(out, dict) or "resultId" not in out:
+        raise ApiError(f"trader.dev: {(out or {}).get('text') or 'no result came back'}"[:600], 502)
+    return out
+
+
+def traderdev_result(result_id):
+    """Trades and equity curve of a finished trader.dev backtest (public files, no key needed)."""
+    if not TRADERDEV_ID_RE.match(result_id):
+        raise ApiError("That doesn't look like a trader.dev result ID.")
+    req = urllib.request.Request(TRADERDEV_RESULTS.format(result_id), headers={"User-Agent": f"VWAPLab/{VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        raise ApiError("No trader.dev result with that ID." if e.code in (403, 404) else f"trader.dev returned HTTP {e.code}.", 404 if e.code in (403, 404) else 502)
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ApiError(f"Could not reach trader.dev: {getattr(e, 'reason', e)}", 502)
+    try:
+        blob = json.loads(gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw)
+    except (OSError, ValueError):
+        raise ApiError("trader.dev sent a result file the server could not read.", 502)
+    trades = [{k: t.get(k) for k in TRADE_FIELDS} for t in blob.get("trades") or []]
+    equity = [[p.get("barTime"), p.get("equity"), p.get("netProfit")] for p in blob.get("equity") or []]
+    return {"id": result_id, "reportUrl": TRADERDEV_REPORT.format(result_id), "trades": trades, "equity": equity}
+
+
+def list_pine():
+    if not PINE_DIR.exists():
+        return []
+    return [{"id": p.stem, "code": p.read_text(encoding="utf-8")} for p in sorted(PINE_DIR.glob("*.pine")) if ID_RE.match(p.stem)]
+
+
 # --------------------------------------------------------------------------- strategies & datasets
 
 
@@ -367,6 +588,24 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError:
                 raise ApiError("bars must be a number.")
             return self._send_json(fetch_binance(symbol, query.get("interval", "1h"), count))
+
+        if route == "pine" and method == "GET" and len(parts) == 1:
+            return self._send_json({"scripts": list_pine()})
+
+        if route == "traderdev":
+            sub = parts[1] if len(parts) > 1 else ""
+            if method == "GET" and sub == "status":
+                return self._send_json(traderdev_status())
+            if sub == "key" and method == "PUT":
+                save_traderdev_key(self._read_json().get("key"))
+                return self._send_json(traderdev_status())
+            if sub == "key" and method == "DELETE":
+                forget_traderdev_key()
+                return self._send_json(traderdev_status())
+            if sub == "backtest" and method == "POST":
+                return self._send_json(traderdev_backtest(self._read_json()))
+            if sub == "results" and method == "GET" and len(parts) == 3:
+                return self._send_json(traderdev_result(parts[2]))
 
         raise ApiError("Not found", 404)
 

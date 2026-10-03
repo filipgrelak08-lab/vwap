@@ -768,7 +768,7 @@
 
   // ---------------------------------------------------------------- tabs
 
-  const TABS = ['chart', 'trades', 'monthly', 'optimize', 'code'];
+  const TABS = ['chart', 'trades', 'monthly', 'optimize', 'code', 'traderdev'];
 
   function selectTab(tab) {
     if (!TABS.includes(tab)) tab = 'chart';
@@ -780,6 +780,7 @@
       /* sandboxed: ignore */
     }
     if (tab === 'code') refreshGutter();
+    if (tab === 'traderdev') BT.traderdev.show();
   }
 
   // ---------------------------------------------------------------- code editor
@@ -1501,6 +1502,7 @@
     renderSettings();
     state.server = await detectServer();
     renderEnv();
+    BT.traderdev.init({ server: state.server, kpi });
     try {
       await loadStrategies();
     } catch (e) {
