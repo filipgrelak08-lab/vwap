@@ -1,0 +1,23 @@
+//@version=6
+// Padysak & Vojtko (2022): hold BTC for the next day when today's close is at its x-day MAX (trend)
+// or MIN (mean reversion). Run on a 1D chart. Turn useMax / useMin off for the single-leg versions.
+strategy("BTC 10d MAX+MIN", overlay=true, pyramiding=1, process_orders_on_close=true, commission_type=strategy.commission.percent, commission_value=0.05, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=100, margin_short=100)
+
+lookback = input.int(10, "Lookback (days)")
+useMax = input.bool(true, "Buy at x-day high")
+useMin = input.bool(true, "Buy at x-day low")
+
+hh = ta.highest(close, lookback)
+ll = ta.lowest(close, lookback)
+atMax = close >= hh
+atMin = close <= ll
+signal = (useMax and atMax) or (useMin and atMin)
+
+if signal and strategy.position_size == 0
+    strategy.entry("L", strategy.long)
+if not signal and strategy.position_size > 0
+    strategy.close("L")
+
+plot(hh, title="x-day high")
+plot(ll, title="x-day low")
+plot(signal ? 1 : 0, title="signal")

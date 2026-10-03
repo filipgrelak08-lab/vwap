@@ -1,0 +1,13 @@
+strategy,period,trades,gross_return_pct_before_fees,win_rate_pct,from,to,total_return_pct,cagr_pct,vol_pct,sharpe,max_dd_pct,result_url
+Seasonality 21-23 UTC (1h),paper,678,112.5,50.3,2020-03-26,2022-02-03,6.3,3.3,20.0,0.26,-20.6,https://mcp-api.trader.dev/backtest/01M41Y4GPYQ05Q5BFMFPBP96MH
+Seasonality 21-23 UTC (1h),after,1699,130.1,42.6,2022-02-06,2026-10-03,-57.8,-16.9,13.6,-1.3,-57.9,https://mcp-api.trader.dev/backtest/01M41Y4GPYQ05Q5BFMFPBP96MH
+Seasonality 22-24 UTC (1h),paper,679,5.1,46.5,2020-03-26,2022-02-03,-47.1,-28.9,21.0,-1.52,-49.6,https://mcp-api.trader.dev/backtest/01M41Y808VYDKDX225QVEBBMJZ
+Seasonality 22-24 UTC (1h),after,1699,19.1,40.2,2022-02-06,2026-10-03,-77.6,-27.5,13.6,-2.3,-79.2,https://mcp-api.trader.dev/backtest/01M41Y808VYDKDX225QVEBBMJZ
+10d MAX+MIN (1D),paper,122,380.9,57.4,2020-03-27,2022-02-02,325.3,118.1,45.4,1.94,-25.7,https://mcp-api.trader.dev/backtest/01M41Y8EAPAMD32PCS12Y1N3Q8
+10d MAX+MIN (1D),after,310,92.3,46.8,2022-02-05,2026-10-03,41.1,7.7,33.0,0.39,-44.7,https://mcp-api.trader.dev/backtest/01M41Y8EAPAMD32PCS12Y1N3Q8
+10d MAX only (1D),paper,74,127.0,37.8,2020-03-27,2022-02-02,110.7,49.4,33.4,1.36,-19.6,https://mcp-api.trader.dev/backtest/01M41Y8ZVSHME7R13GRTCG47B1
+10d MAX only (1D),after,168,101.0,29.8,2022-02-05,2026-10-03,69.9,12.0,22.2,0.62,-21.2,https://mcp-api.trader.dev/backtest/01M41Y8ZVSHME7R13GRTCG47B1
+10d MIN only (1D),paper,50,111.8,84.0,2020-03-27,2022-02-02,101.4,45.8,30.6,1.38,-21.5,https://mcp-api.trader.dev/backtest/01M41Y91YQG9V0MK9Y8XV2YPK7
+10d MIN only (1D),after,143,-4.3,66.4,2022-02-05,2026-10-03,-17.0,-3.9,24.3,-0.04,-33.7,https://mcp-api.trader.dev/backtest/01M41Y91YQG9V0MK9Y8XV2YPK7
+Buy and hold (1D),paper,0,,,2020-03-27,2022-02-02,447.7,150.0,72.6,1.62,-53.2,https://mcp-api.trader.dev/backtest/01M41Y93V9F39HHRD28CHEPK54
+Buy and hold (1D),after,0,,,2022-02-05,2026-10-03,103.2,16.4,51.1,0.55,-66.7,https://mcp-api.trader.dev/backtest/01M41Y93V9F39HHRD28CHEPK54

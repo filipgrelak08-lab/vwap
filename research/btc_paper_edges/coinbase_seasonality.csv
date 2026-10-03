@@ -1,0 +1,13 @@
+strategy,period,costs,trades,avg_gross_bps,win_rate_pct,from,to,total_return_pct,cagr_pct,vol_pct,sharpe,max_dd_pct
+Seasonality 21-23 UTC,paper,none,2258,11.81,57.2,2015-11-26,2022-02-03,1116.5,49.7,23.1,1.87,-18.9
+Seasonality 21-23 UTC,paper,maker 0.02%/side,2258,11.81,53.9,2015-11-26,2022-02-03,393.0,29.4,23.0,1.24,-26.6
+Seasonality 21-23 UTC,paper,taker 0.05%/side,2258,11.81,49.1,2015-11-26,2022-02-03,27.1,4.0,23.0,0.29,-40.6
+Seasonality 21-23 UTC,after,none,1701,5.21,52.4,2022-02-04,2026-10-03,131.9,19.8,13.8,1.38,-21.8
+Seasonality 21-23 UTC,after,maker 0.02%/side,1701,5.21,48.0,2022-02-04,2026-10-03,17.4,3.5,13.8,0.32,-28.7
+Seasonality 21-23 UTC,after,taker 0.05%/side,1701,5.21,42.6,2022-02-04,2026-10-03,-57.7,-16.8,13.8,-1.27,-57.7
+Seasonality 22-24 UTC,paper,none,2259,6.86,55.2,2015-11-26,2022-02-03,297.4,25.0,23.3,1.08,-41.6
+Seasonality 22-24 UTC,paper,maker 0.02%/side,2259,6.86,52.2,2015-11-26,2022-02-03,61.0,8.0,23.3,0.45,-51.9
+Seasonality 22-24 UTC,paper,taker 0.05%/side,2259,6.86,47.6,2015-11-26,2022-02-03,-58.5,-13.2,23.3,-0.49,-77.7
+Seasonality 22-24 UTC,after,none,1702,1.27,50.2,2022-02-04,2026-10-02,18.9,3.8,13.6,0.34,-25.3
+Seasonality 22-24 UTC,after,maker 0.02%/side,1702,1.27,45.9,2022-02-04,2026-10-02,-39.8,-10.3,13.6,-0.73,-45.3
+Seasonality 22-24 UTC,after,taker 0.05%/side,1702,1.27,40.1,2022-02-04,2026-10-02,-78.3,-28.0,13.6,-2.34,-79.8
