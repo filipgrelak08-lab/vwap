@@ -355,6 +355,9 @@
     renderRuns();
   }
 
+  // results a standalone or hosted build carries, so past runs open without the server
+  const embedded = (id) => (root.BT_TD_RESULTS && root.BT_TD_RESULTS[id]) || null;
+
   async function openRun(id, doneMessage) {
     const known = td.known[id];
     const rec = td.runs.find((r) => r.id === id) || (known && Number.isFinite(known.returnPct) ? known : null);
@@ -362,7 +365,7 @@
     // a brand-new result file can take a moment to appear
     for (let attempt = 0; ; attempt++) {
       try {
-        const blob = await api('GET', `api/traderdev/results/${encodeURIComponent(id)}`);
+        const blob = embedded(id) || (await api('GET', `api/traderdev/results/${encodeURIComponent(id)}`));
         // no stored summary: work it out from the result file, keeping any name we were given
         const labels = {};
         for (const k of ['name', 'symbol', 'timeframe']) if (known && known[k]) labels[k] = known[k];
@@ -458,7 +461,7 @@
   function openResult(rec) {
     td.known[rec.id] = rec;
     td.selectTab('traderdev');
-    if (td.server) openRun(rec.id);
+    if (td.server || embedded(rec.id)) openRun(rec.id);
   }
 
   async function loadPine(id) {
@@ -489,5 +492,5 @@
     td.templatesReady = loadTemplates();
   }
 
-  BT.traderdev = { init, show, tfLabel, openResult, loadPine };
+  BT.traderdev = { init, show, tfLabel, openResult, loadPine, canOpen: (id) => td.server || !!embedded(id) };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -69,11 +69,11 @@
       s.runs.map((r) => {
         const open = el('button', 'btn ghost small', 'Open');
         open.type = 'button';
-        open.disabled = !lib.server;
+        open.disabled = !BT.traderdev.canOpen(r.id);
         open.addEventListener('click', () => BT.traderdev.openResult(r));
         const bh = el('button', 'btn ghost small', 'Buy and hold');
         bh.type = 'button';
-        bh.disabled = !lib.server || !r.bhId;
+        bh.disabled = !r.bhId || !BT.traderdev.canOpen(r.bhId);
         bh.addEventListener('click', () => BT.traderdev.openResult({ id: r.bhId, name: `Buy and hold · ${r.label}`, symbol: r.symbol, timeframe: r.timeframe }));
         const btns = el('td', 'lib-run-btns');
         btns.append(open, bh);

@@ -12,6 +12,11 @@ saving to strategies/ need `python3 server.py`.
 
 --fragment writes body-level markup (no <html>/<head>/<body> wrapper) and loads
 the chart library from jsDelivr, for hosts that supply their own page skeleton.
+
+--datasets FILE embeds price data for the Library's "Run here" buttons: a JSON object
+like {"BTC-USD|1d": [[unix_seconds, open, high, low, close, volume], ...]}.
+--embed-results downloads the trader.dev results the Library links to and embeds them,
+so its "Open" buttons work without the server (needs internet while building).
 """
 import argparse
 import json
@@ -35,7 +40,7 @@ def inline_js(code):
     return code.replace("</script", "<\\/script")
 
 
-def build(fragment):
+def build(fragment, datasets=None, embed_results=False):
     html = (WEB / "index.html").read_text(encoding="utf-8")
     title = re.search(r"<title>.*?</title>", html, re.S).group(0)
     links = "\n".join(re.findall(r'<link rel="(?:preconnect|stylesheet)" href="https://fonts[^>]*>', html))
@@ -50,8 +55,13 @@ def build(fragment):
         if re.match(r"^[A-Za-z0-9_-]{1,64}$", p.stem)
     ]
     boot = "window.BT_PREVIEW = true;\nwindow.BT_BUNDLED_STRATEGIES = " + json.dumps(strategies, indent=0) + ";"
-    if LIBRARY.exists():  # the Library tab works offline too
-        boot += "\nwindow.BT_LIBRARY = " + json.dumps(json.loads(LIBRARY.read_text(encoding="utf-8")), ensure_ascii=False) + ";"
+    library = json.loads(LIBRARY.read_text(encoding="utf-8")) if LIBRARY.exists() else None
+    if library:  # the Library tab works offline too
+        boot += "\nwindow.BT_LIBRARY = " + json.dumps(library, ensure_ascii=False) + ";"
+    if datasets:
+        boot += "\nwindow.BT_DATASETS = " + json.dumps(json.loads(Path(datasets).read_text(encoding="utf-8")), separators=(",", ":")) + ";"
+    if embed_results and library:
+        boot += "\nwindow.BT_TD_RESULTS = " + json.dumps(traderdev_results(library), separators=(",", ":")) + ";"
 
     scripts = [f"<script>{inline_js(boot)}</script>"]
     for f in js_files:
@@ -70,14 +80,25 @@ def build(fragment):
     )
 
 
+def traderdev_results(library):
+    """Trades and equity of every trader.dev run the library links to, fetched like the server does."""
+    sys.path.insert(0, str(ROOT))
+    import server  # noqa: E402
+
+    ids = {r[k] for s in library["strategies"] for r in s["runs"] for k in ("id", "bhId") if r.get(k)}
+    return {rid: server.traderdev_result(rid) for rid in sorted(ids)}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-o", "--output", help="output file (default dist/vwap-lab.html)")
     ap.add_argument("--fragment", action="store_true", help="omit the html/head/body wrapper and load the chart library from a CDN")
+    ap.add_argument("--datasets", help="JSON file of price data to embed for the Library's Run here buttons")
+    ap.add_argument("--embed-results", action="store_true", help="embed the trader.dev results the Library links to")
     args = ap.parse_args(argv)
     out = Path(args.output) if args.output else ROOT / "dist" / "vwap-lab.html"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build(args.fragment), encoding="utf-8")
+    out.write_text(build(args.fragment, args.datasets, args.embed_results), encoding="utf-8")
     print(f"Wrote {out} ({out.stat().st_size / 1024:.0f} KB)")
     return 0
 

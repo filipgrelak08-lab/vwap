@@ -396,7 +396,11 @@
     selectTab('chart');
     selectStrategy(spec.strategy);
     const d = spec.data;
-    if (d && d.source === 'yahoo' && state.server) {
+    const embedded = d && window.BT_DATASETS && window.BT_DATASETS[`${d.symbol}|${d.interval}`];
+    if (embedded && !state.server) {
+      // a hosted or standalone build can carry the data the Library uses
+      setDataset(BT.data.fromBars(embedded, { symbol: d.symbol, name: `${d.symbol} (built in)`, interval: d.interval, source: 'built in', timezone: 'UTC' }));
+    } else if (d && d.source === 'yahoo' && state.server) {
       $('yahooSymbol').value = d.symbol;
       $('yahooInterval').value = d.interval;
       $('yahooRange').value = d.range;
