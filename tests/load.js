@@ -1,27 +1,30 @@
-// Loads the browser scripts into a Node sandbox so tests can use window.BT.
+/* Loads the browser modules into the node test context. */
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const FILES = ['format.js', 'indicators.js', 'metrics.js', 'engine.js', 'data.js', 'optimizer.js'];
+const ROOT = path.join(__dirname, '..');
+const FILES = ['web/js/format.js', 'web/js/metrics.js', 'web/js/strategy.js', 'web/js/pine.js'];
 
-function loadBT() {
-  const sandbox = { console, Math, Date, Number, String, Array, Object, Error, JSON, URLSearchParams, setTimeout };
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  for (const f of FILES) {
-    const file = path.join(__dirname, '..', 'web', 'js', f);
-    vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
+let loaded = false;
+function load() {
+  if (!loaded) {
+    for (const file of FILES) {
+      vm.runInThisContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), { filename: file });
+    }
+    loaded = true;
   }
-  return sandbox.BT;
+  return globalThis.BT;
 }
 
-function readStrategy(name) {
-  return fs.readFileSync(path.join(__dirname, '..', 'strategies', name), 'utf8');
+/** Every strategy shipped in strategies/, as { id, code }. */
+function strategyFiles() {
+  const dir = path.join(ROOT, 'strategies');
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.js'))
+    .sort()
+    .map((f) => ({ id: f.replace(/\.js$/, ''), code: fs.readFileSync(path.join(dir, f), 'utf8') }));
 }
 
-function listStrategies() {
-  return fs.readdirSync(path.join(__dirname, '..', 'strategies')).filter((f) => f.endsWith('.js')).sort();
-}
-
-module.exports = { loadBT, readStrategy, listStrategies };
+module.exports = { load, strategyFiles, ROOT };

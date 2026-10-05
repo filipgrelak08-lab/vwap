@@ -1,65 +1,85 @@
 # VWAP Lab
 
-A local backtester for trading strategies. Run one Python file, open your browser, pick or write a strategy, and see how it would have traded: equity curve, drawdown, every trade on the chart, monthly returns, and a parameter sweep with out-of-sample testing.
+A backtester for trading strategies that runs every backtest on [Trader.dev](https://mcp-api.trader.dev). Run one Python file, open your browser, pick or write a strategy, and see how it would have traded: equity curve, drawdown, every trade, monthly returns, and a parameter sweep.
 
-- **No installs.** The server uses only the Python standard library; the app is plain HTML/JS.
-- **Strategies are small JavaScript files** in `strategies/`. Edit them in the built-in editor or in your own editor.
-- **Data:** Yahoo Finance (stocks, ETFs, indices, FX, crypto), Binance (crypto), your own CSV files, or the built-in synthetic samples.
-- **Eight example strategies** to start from: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
+Strategies are small JavaScript files that describe their parameters and return the Pine Script for their signals. The app generates the finished script from the strategy plus whatever you have set in the sidebar, and sends it to Trader.dev on every run — so the code Trader.dev tests always matches what you changed in the app. The Pine sent tab shows exactly what went out.
+
+- **Backtests run on Trader.dev.** Nothing is simulated locally, so the numbers are the ones Trader.dev's TradingView-parity engine produces.
+- **Your edits go with every run.** Change a parameter or a stop, press Run, and the regenerated Pine carries it.
+- **Runs are versioned.** The first run of a strategy creates it on Trader.dev; later runs add versions to the same strategy, so its report shows the history.
+- **Eight example strategies**: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
 
 ## Quick start
 
+You need a Trader.dev API key (it starts with `pk_`), Python 3.8+ and a current browser.
+
 ```bash
+export TRADERDEV_API_KEY=pk_your_key_here
 python3 server.py
 ```
 
-Your browser opens at <http://localhost:8000>. On Windows use `py server.py`. Options: `--port 9000`, `--no-browser`, `--verbose`.
+Your browser opens at <http://localhost:8000>. On Windows use `py server.py`, and `set TRADERDEV_API_KEY=pk_...` instead of `export`.
 
-Requirements: Python 3.8+ and a current browser. Live data needs an internet connection.
+Options: `--port 9000`, `--no-browser`, `--verbose`.
 
-> No Python? Build a single HTML file that runs on its own with `python3 tools/build_standalone.py` (on any machine that has Python) and open `dist/vwap-lab.html`. It includes the example strategies and works with sample and CSV data. Live downloads and saving to `strategies/` need the server.
+The key stays on your machine: the browser talks to this server, and this server talks to Trader.dev. Nothing writes the key to disk, so set it in your shell (or your shell profile) each session. The badge at the top right says whether Trader.dev answered; if it did not, the message says why.
+
+If Trader.dev moves its API endpoint, point the server at the new one with `TRADERDEV_MCP_URL=https://.../mcp`.
+
+Each backtest costs one Trader.dev credit, and a parameter sweep costs one per combination. The Run button shows your balance.
 
 ## Using it
 
-1. **Market data** (left panel). Pick a source:
-   - **Sample**: generated price series for trying things out. Not real market data.
-   - **Yahoo**: any Yahoo Finance ticker (`AAPL`, `SPY`, `^GSPC`, `BTC-USD`, `EURUSD=X`). Yahoo limits intraday history: 1m covers 7 days, 5m–30m cover 60 days, 1h covers 2 years.
-   - **Binance**: spot pairs such as `BTCUSDT`, up to 20,000 candles.
-   - **CSV**: open a file, or drop CSVs into `data/` and pick them from the list. Columns: `Date` (or `Datetime`/`Timestamp`), `Open`, `High`, `Low`, `Close`, `Volume`. Exports from Yahoo, TradingView, Binance, Nasdaq and MetaTrader work as-is.
-   - **From / To** narrows the test to a date range.
-2. **Strategy**: choose one and adjust its parameters. With auto-run on, results update as you drag.
-3. **Execution**, **Position size**, **Stops and targets**, **Entry filters** (see [Risk settings](#risk-settings)): capital, costs, fill timing, shorting, how big each trade is, where it exits, and when new trades are allowed. They apply to every strategy.
-4. **Results**: summary tiles, then tabs:
-   - **Chart**: candles with indicators and entry/exit markers, plus equity vs buy and hold and drawdown. All charts zoom and pan together.
-   - **Trades**: statistics, the full trade list with R-multiple, MAE and MFE per trade, and two scatter charts showing where stops and targets would have worked. Click a trade to jump to it on the chart. Download as CSV.
+1. **Market** (left panel). Symbol, timeframe and an optional date range. Trader.dev tests Bybit USDT perpetuals — `BTCUSDT`, `ETHUSDT`, `SOLUSDT` and the rest of its coverage. Leave the dates empty for the longest window it has. If a symbol is not covered or the dates fall outside its archive, Trader.dev substitutes what it can and the app says so above the results.
+2. **Strategy**: choose one and adjust its parameters.
+3. **Execution**, **Stops and targets**, **Entry filter** (see [Settings](#settings)): starting capital, shorting, where trades exit and when new ones are allowed. They apply to every strategy and become part of the generated Pine.
+4. **Run on Trader.dev**. There is no auto-run, because each run costs a credit.
+5. **Results**: summary tiles, then tabs:
+   - **Equity**: the equity curve and drawdown from Trader.dev, zooming and panning together.
+   - **Trades**: statistics, the full trade list with each trade's worst and best point, and two scatter charts showing where stops and targets would have worked. Click a trade to jump to it. Download as CSV.
    - **Monthly returns**: a calendar heatmap.
-   - **Optimize**: sweep one or two strategy parameters or risk settings (e.g. ATR stop × reward:risk). Choose "Optimize on first 70%" to rank settings on the first part of the data and see how the best ones did on the rest.
+   - **Optimize**: sweep one or two parameters on Trader.dev's optimizer.
    - **Code**: the strategy source. `Ctrl/⌘ + Enter` runs, `Ctrl/⌘ + S` saves to `strategies/<name>.js`.
+   - **Pine sent**: the exact script of the last run, ready to paste into TradingView.
+   - The candle chart with every fill marked is on the Trader.dev report; each run links to it.
 
-## Risk settings
+## Settings
 
 **R** is the distance from entry to the initial stop. A trade that makes twice what it risked is +2R.
 
 | Setting | What it does |
 |---|---|
-| Size each trade by **% of equity** | Every trade uses the position size % of your current equity. |
-| Size each trade by **risk per trade** | Size so that hitting the stop loses that % of equity. Needs a stop; the position size becomes a cap. |
+| **Starting capital** | The account the backtest starts with. |
+| **Allow short selling** | Off: a short signal only closes a long. |
 | **Stop loss %** | Fixed % stop from the entry price. |
-| **ATR stop (× ATR)** | Stop k × ATR from entry, using the ATR of the signal bar. Adapts to volatility. |
+| **ATR stop (× ATR)** | Stop k × ATR from entry. Adapts to volatility. |
 | **Take profit %** | Fixed % target. |
 | **Reward:risk (R)** | Target = entry ± R × the stop distance. |
-| **Trailing %** | Stop that follows the best price by this %. |
+| **Trailing %** | Stop that follows the best price by this %, tightening only. |
 | **Break-even after (R)** | Once the trade is this many R in profit, the stop moves to the entry price. |
-| **Time stop (bars)** | Close after this many bars, at the bar's close. |
-| **Close positions at the end of each day** | Intraday data only. |
-| **Enter from / until** | New trades only in this window (exchange time, intraday data). |
+| **Time stop (bars)** | Close after this many bars. |
 | **Trend SMA** | Longs only above this SMA, shorts only below it. |
-| **Max trades / day** | Stop opening trades after this many in a day. |
-| **Daily loss limit %** | When equity falls this % below the day's start, close the position and stop for the day. |
 
-Priority when several apply: the strategy's own `stop`/`target` first, then the ATR stop before stop loss %, and reward:risk before take profit %. Filters never block exits. The Trades tab lists how many signals each filter skipped.
+Priority when several apply: the strategy's own `longStop`/`longTarget` first, then the ATR stop before stop loss %, and reward:risk before take profit %. The filter only blocks entries; exits always go through.
 
-**MAE** (maximum adverse excursion) is the worst point against you while a trade was open; **MFE** (maximum favourable excursion) is the best point in your favour. If 90% of winners never went more than 0.4% against you, a 2% stop is wider than it needs to be. If losers were often in profit first, a target or break-even stop could have saved them.
+Each setting that is switched on becomes a Pine input in the generated script, which is what lets the Optimize tab sweep it and what makes the script editable on TradingView.
+
+### Set by Trader.dev, not by you
+
+Trader.dev runs every backtest on one broker profile so the numbers line up with TradingView's Strategy Tester. The app has no controls for these:
+
+| | |
+|---|---|
+| Order size | 100% of equity |
+| Margin | long 100, short 100 |
+| Pyramiding | 1 (one position at a time) |
+| Commission | 0.05% per side |
+| Slippage | 0 |
+| Fills | on the signal bar's close |
+
+To reproduce a run on TradingView, paste the script from the Pine sent tab and match those, plus the same symbol, timeframe and dates. Set TradingView's commission to 0% — Trader.dev's parity profile already accounts for it.
+
+This also means a few things the old local engine could do have no equivalent here: risk-per-trade position sizing, a daily loss limit, a cap on trades per day, trading-hour windows and closing out at the end of each session. Trader.dev's markets trade around the clock, so the session-based ones would not mean much anyway; a strategy that wants a daily anchor can work it out from `time` (both VWAP strategies do).
 
 ## Writing a strategy
 
@@ -75,19 +95,23 @@ export default {
     slow: { value: 26, min: 5, max: 300, label: 'Slow EMA' },
   },
 
-  // runs once: compute indicators
-  setup({ data, params, ta, plot }) {
-    const fast = ta.ema(data.close, params.fast);
-    const slow = ta.ema(data.close, params.slow);
-    plot('Fast EMA', fast);
-    plot('Slow EMA', slow);
-    return { fast, slow };
-  },
+  // Returns the Pine Script v6 that Trader.dev runs.
+  // p.fast is the *name* of that parameter's Pine input, so it goes
+  // straight into the code.
+  pine({ p }) {
+    return {
+      body: `
+fastMa = ta.ema(close, ${p.fast})
+slowMa = ta.ema(close, ${p.slow})`,
 
-  // runs after every bar closes
-  onBar(ctx) {
-    if (ctx.crossOver(ctx.ind.fast, ctx.ind.slow)) ctx.long();
-    if (ctx.crossUnder(ctx.ind.fast, ctx.ind.slow)) ctx.exit('cross down');
+      longEntry: 'ta.crossover(fastMa, slowMa)',
+      shortEntry: 'ta.crossunder(fastMa, slowMa)',
+
+      plots: [
+        { title: 'Fast EMA', expr: 'fastMa' },
+        { title: 'Slow EMA', expr: 'slowMa' },
+      ],
+    };
   },
 };
 ```
@@ -98,74 +122,75 @@ Click **New strategy** in the app to start from this template, or copy the examp
 
 | | |
 |---|---|
-| **params** | `len: 20`, or `{ value, min, max, step, label }`. `true`/`false` gives a checkbox, `{ value: 'EMA', options: ['SMA', 'EMA'] }` a dropdown. |
-| **setup({ data, params, ta, plot })** | `data.open/high/low/close/volume/time` are arrays. Return what `onBar` needs; it arrives as `ctx.ind`. |
-| **plot(name, series, opts)** | `opts.color`: `vwap`, `band`, `accent`, `up`, `down` or any CSS colour. `opts.style`: `line`, `dashed`, `dots`, `histogram`. `opts.pane: 'lower'` draws below the price. `opts.levels: [30, 70]` adds guide lines. |
-| **bar data** | `ctx.i`, `ctx.open`, `ctx.high`, `ctx.low`, `ctx.close`, `ctx.volume`, `ctx.time` |
-| **position** | `ctx.isFlat`, `ctx.isLong`, `ctx.isShort`, `ctx.position.entryPrice`, `.barsHeld`, `.pnlPct`, `.stop`, `.target`, `.risk` (1R in price), `ctx.equity` |
-| **session / time** | `ctx.newSession`, `ctx.lastBarOfSession`, `ctx.sessionBar` (0 = first bar of the day), `ctx.hour`, `ctx.minute`, `ctx.dayOfWeek` (0 = Sunday) |
-| **orders** | `ctx.long(opts)`, `ctx.short(opts)`, `ctx.exit(reason)`, `ctx.cancel()`, `ctx.setStop(price)`, `ctx.setTarget(price)` |
-| **order opts** | `stop`, `target` (prices), `trail` (%), `size` (0–1 of equity; skips risk sizing), `label`, `atClose: true` (fill at this bar's close) |
-| **helpers** | `ctx.crossOver(a, b)`, `ctx.crossUnder(a, b)`, `ctx.prev(series, n)`, `ctx.log(...)` |
-| **ta** | `sma ema wma rma stdev highest lowest rsi macd stoch roc change zscore bollinger donchian keltner atr trueRange adx obv hlc3 hl2 ohlc4 vwap vwapBands rollingVwap anchorIds sessionStart sessionEnd sessionBar crossover crossunder` |
+| **params** | `len: 20`, or `{ value, min, max, step, label }`. `true`/`false` gives a checkbox, `{ value: 'EMA', options: ['SMA', 'EMA'] }` a dropdown in the sidebar (in the Pine it is a plain string input, because the engine's parser rejects an options list). Every parameter becomes a Pine input named `p_<key>`. |
+| **pine({ p, params, settings })** | `p.len` is the Pine input's name (`p_len`); `params.len` is its current value, for when you need the number at generation time. |
+| **body** | Pine that computes your indicators and helper variables. |
+| **longEntry**, **shortEntry** | Pine expressions, true when a trade opens. At least one is required. |
+| **longExit**, **shortExit** | True when the position closes on a signal. |
+| **longStop**, **shortStop**, **longTarget**, **shortTarget** | Price levels read at entry. They win over the sidebar's stop and target; return `na` to fall back to it. |
+| **plots** | `[{ title, expr }]`, drawn on the Trader.dev report. They share the price chart, so plot price levels; an oscillator like RSI flattens the candles into a line. |
 
-`ta.vwap(data, anchor)` and `ta.vwapBands(data, mult, anchor)` reset each `session` (day), `week` or `month`, or never with `none`. `ta.rollingVwap(data, n)` is the VWAP of the last n bars, which is more useful on daily data.
+The app adds the `strategy()` header, the inputs, the entry and exit orders, and whichever stops, targets and filters are switched on.
 
-Keep per-run state (for example "already traded today") in the object `setup()` returns, not in variables outside the strategy, because the optimizer runs the same strategy many times.
+### What the engine allows
+
+Trader.dev's engine implements a fixed set of Pine:
+
+`ta.`sma ema rma wma vwma hma swma alma linreg median mode percentile_nearest_rank percentile_linear_interpolation percentrank rsi stoch cci cmo mfi roc mom change tsi wpr cog macd bb bbw kc kcw dmi supertrend sar crossover crossunder cross barssince valuewhen rising falling pivothigh pivotlow highest lowest highestbars lowestbars range stdev dev variance correlation cum max min atr tr vwap obv pvt accdist iii wad wvad nvi pvi
+
+Also `open high low close volume time bar_index hl2 hlc3 ohlc4`, `na() nz() fixnan()`, `math.*`, `input.*`, `var`, `:=`, `if`/`for`, and history access with `[]`.
+
+Not available: `request.security` and other timeframes, arrays and maps, user-defined functions and types, `strategy.cancel`, `strategy.order`, `calc_on_every_tick`, drawings as logic, and pyramiding above 1. `npm test` checks the generated scripts against this list, so a strategy that strays is caught before it costs a credit.
 
 ### Coming from TradingView Pine Script
 
-| Pine | VWAP Lab |
+Because strategies are written in Pine already, most of a TradingView strategy ports across unchanged. What moves:
+
+| In your Pine | In a VWAP Lab strategy |
 |---|---|
-| `ta.sma(close, 20)` | `ta.sma(data.close, 20)` in `setup()` |
-| `ta.vwap(hlc3)` | `ta.vwap(data, 'session')` |
-| `ta.crossover(a, b)` | `ctx.crossOver(ind.a, ind.b)` |
-| `strategy.entry("L", strategy.long)` | `ctx.long()` |
-| `strategy.entry("S", strategy.short)` | `ctx.short()` |
-| `strategy.close("L")` | `ctx.exit()` |
-| `strategy.exit("x", stop=s, limit=t)` | `ctx.long({ stop: s, target: t })` or `ctx.setStop(s)` |
-| `input.int(14, "Length")` | `params: { length: { value: 14, label: 'Length' } }` |
-| `close[1]` | `data.close[i - 1]`, or `ctx.prev(data.close)` |
+| `strategy(...)` header | Dropped — the app writes it |
+| `input.int(14, "Length")` | `params: { length: { value: 14, label: 'Length' } }`, then `${p.length}` in the body |
+| `ta.sma(close, 20)` | the same, in `body` |
+| indicator maths, `var`, `:=`, `[]` | the same, in `body` |
+| `if cond \n strategy.entry("L", strategy.long)` | `longEntry: 'cond'` |
+| `strategy.close("L")` on a signal | `longExit: 'cond'` |
+| `strategy.exit("x", stop=s, limit=t)` | `longStop: 's'`, `longTarget: 't'` |
+| `plot(series, title="X")` | `plots: [{ title: 'X', expr: 'series' }]` |
+| `time(timeframe.period, session)` | arithmetic on `time` (see the VWAP strategies) |
 
 ## How trades are simulated
 
-- `onBar` runs after a bar closes. Orders fill at the **next bar's open** (or at the same bar's close if you choose that, or pass `atClose: true`). The strategy never sees future bars.
-- Stops, targets and trailing stops trigger inside a bar using its high and low. If the bar opens beyond the level (a gap), the fill is the open. If a stop and a target are both inside one bar, the stop is assumed to hit first.
-- One position at a time. `long()` while short closes the short and opens a long. With shorting off, a short signal only closes the long.
-- Position size is a percentage of current equity (or set by risk per trade), with fractional quantities. Commission is a percentage of traded value per side; slippage moves every fill against you.
-- Statistics are annualised using the calendar span of the data, so they work for any bar size and for 24/7 markets. Sharpe and Sortino use a 0% risk-free rate.
-- Intraday times are shown in the exchange's local time (UTC for Binance), so "the session" means the exchange's trading day.
+That is Trader.dev's job, and its report is the reference. In outline: the script runs once per closed bar, orders fill at that bar's close (`process_orders_on_close`), one position at a time, position size is 100% of equity, and commission is 0.05% per side. Stops and targets are placed as `strategy.exit` orders and trigger inside a bar. Trailing stops ratchet and are re-issued each bar.
 
-A backtest is a model. It does not include partial fills, borrow costs, funding rates, dividends on short positions or market impact, and a good backtest says little about the future. Test on data you did not tune on, and treat results with suspicion before risking money.
+A backtest is a model. A good backtest says little about the future. Test on data you did not tune on, and treat results with suspicion before risking money.
 
 ## Project layout
 
 ```
-server.py                 local server: static files, strategy files, Yahoo/Binance proxy
+server.py                 local server: static files, strategy files, Trader.dev proxy
 strategies/*.js           strategies (one file each)
-data/                     drop CSV files here
 web/index.html            the app
-web/js/engine.js          strategy compiler and bar-by-bar simulator
-web/js/indicators.js      technical indicators (ta.*)
-web/js/metrics.js         performance statistics
-web/js/data.js            sample data, CSV parser, data loaders
-web/js/optimizer.js       parameter sweeps
-web/js/charts.js          charts (TradingView Lightweight Charts)
+web/js/strategy.js        loads strategy files and reads their parameters
+web/js/pine.js            generates the Pine Script that gets sent
+web/js/traderdev.js       talks to the server's Trader.dev proxy
+web/js/metrics.js         monthly returns and annualised return
+web/js/charts.js          equity, drawdown and scatter charts
 web/js/app.js             UI
-tools/build_standalone.py bundles everything into one HTML file
 tests/                    unit tests
 ```
 
 ## Tests
 
 ```bash
-node --test tests/*.test.js                 # engine, indicators, metrics, CSV, optimizer
-python3 -m unittest discover -s tests       # server
-VWAPLAB_NETWORK_TESTS=1 python3 -m unittest discover -s tests   # also hit Yahoo and Binance
+npm test                                    # both suites
+node --test tests/*.test.js                 # strategy loading, Pine generation, metrics
+python3 -m unittest discover -s tests       # server and the Trader.dev proxy
 ```
+
+No test spends a credit: the Pine tests check the generated scripts, and the server tests run the Trader.dev proxy against a local stub.
 
 ## Credits
 
-Charts by [TradingView Lightweight Charts™](https://www.tradingview.com/) (Apache 2.0, see `web/vendor/`). Market data from Yahoo Finance and Binance public APIs; check their terms before using the data for anything beyond personal research.
+Charts by [TradingView Lightweight Charts™](https://www.tradingview.com/) (Apache 2.0, see `web/vendor/`). Backtests by [Trader.dev](https://mcp-api.trader.dev). Market data from Bybit via Trader.dev; check their terms before using it for anything beyond personal research.
 
 This tool is for research and education. It is not financial advice.

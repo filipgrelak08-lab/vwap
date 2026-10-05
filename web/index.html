@@ -7,15 +7,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<!-- build:css -->
 <link rel="stylesheet" href="css/app.css">
-<!-- /build:css -->
 </head>
 <body>
-<!-- build:body -->
 <div class="app" id="app">
   <header class="topbar">
-    <a class="brand" href="#chart" aria-label="VWAP Lab">
+    <a class="brand" href="#equity" aria-label="VWAP Lab">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
         <rect x="6" y="9" width="5" height="12" rx="1" class="bm-up"/>
         <line x1="8.5" y1="5" x2="8.5" y2="25" class="bm-wick-up"/>
@@ -26,12 +23,12 @@
       <span class="brand-name">VWAP Lab</span>
       <span class="brand-tag">backtester</span>
     </a>
-    <div class="dataset-chip" id="datasetChip" title="Loaded dataset">
+    <div class="dataset-chip" id="datasetChip" title="Market tested on Trader.dev">
       <span class="chip-symbol" id="chipSymbol">–</span>
-      <span class="chip-meta" id="chipMeta">no data</span>
+      <span class="chip-meta" id="chipMeta">no backtest yet</span>
     </div>
     <div class="topbar-right">
-      <span class="env-badge" id="envBadge" data-state="checking">Checking server…</span>
+      <span class="env-badge" id="envBadge" data-state="checking">Checking Trader.dev…</span>
       <button class="icon-btn" id="themeToggle" type="button" aria-label="Switch colour theme" title="Switch colour theme">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 0 1 0 13z" class="fill"/></svg>
       </button>
@@ -39,101 +36,28 @@
   </header>
 
   <aside class="sidebar" id="sidebar">
-    <!-- Market data -->
-    <section class="panel" aria-labelledby="h-data">
-      <div class="panel-head"><h2 id="h-data">Market data</h2></div>
-      <div class="seg" role="tablist" id="sourceTabs" aria-label="Data source">
-        <button type="button" role="tab" id="src-sample" data-source="sample" aria-selected="true">Sample</button>
-        <button type="button" role="tab" id="src-yahoo" data-source="yahoo" aria-selected="false">Yahoo</button>
-        <button type="button" role="tab" id="src-binance" data-source="binance" aria-selected="false">Binance</button>
-        <button type="button" role="tab" id="src-csv" data-source="csv" aria-selected="false">CSV</button>
-      </div>
-
-      <div class="source-pane" data-pane="sample">
-        <label class="field"><span>Dataset</span><select id="sampleSelect"></select></label>
-        <p class="hint">Generated price series for trying the tool. Not real market data.</p>
-      </div>
-
-      <div class="source-pane" data-pane="yahoo" hidden>
-        <p class="notice server-only">Live downloads go through the local server. Run <code>python3 server.py</code> and open <code>http://localhost:8000</code>.</p>
-        <label class="field"><span>Symbol</span><input id="yahooSymbol" type="text" value="SPY" autocomplete="off" spellcheck="false" placeholder="AAPL, SPY, BTC-USD, EURUSD=X"></label>
-        <div class="field-row">
-          <label class="field"><span>Interval</span>
-            <select id="yahooInterval">
-              <option value="1m">1 minute</option>
-              <option value="5m">5 minutes</option>
-              <option value="15m">15 minutes</option>
-              <option value="30m">30 minutes</option>
-              <option value="1h">1 hour</option>
-              <option value="1d" selected>1 day</option>
-              <option value="1wk">1 week</option>
-            </select>
-          </label>
-          <label class="field"><span>Range</span>
-            <select id="yahooRange">
-              <option value="5d">5 days</option>
-              <option value="1mo">1 month</option>
-              <option value="3mo">3 months</option>
-              <option value="6mo">6 months</option>
-              <option value="1y">1 year</option>
-              <option value="2y">2 years</option>
-              <option value="5y">5 years</option>
-              <option value="10y" selected>10 years</option>
-              <option value="max">Max</option>
-            </select>
-          </label>
-        </div>
-        <label class="check"><input type="checkbox" id="yahooAdjusted" checked> Adjust for dividends and splits</label>
-        <button type="button" class="btn" id="yahooLoad">Load from Yahoo</button>
-        <p class="hint">Yahoo limits intraday history: 1m covers 7 days, 5m–30m cover 60 days, 1h covers 2 years.</p>
-      </div>
-
-      <div class="source-pane" data-pane="binance" hidden>
-        <p class="notice server-only">Live downloads go through the local server. Run <code>python3 server.py</code> and open <code>http://localhost:8000</code>.</p>
-        <label class="field"><span>Pair</span><input id="binanceSymbol" type="text" value="BTCUSDT" autocomplete="off" spellcheck="false" placeholder="BTCUSDT, ETHUSDT, SOLUSDT"></label>
-        <div class="field-row">
-          <label class="field"><span>Interval</span>
-            <select id="binanceInterval">
-              <option value="1m">1 minute</option>
-              <option value="5m">5 minutes</option>
-              <option value="15m">15 minutes</option>
-              <option value="30m">30 minutes</option>
-              <option value="1h" selected>1 hour</option>
-              <option value="4h">4 hours</option>
-              <option value="1d">1 day</option>
-            </select>
-          </label>
-          <label class="field"><span>Bars</span>
-            <select id="binanceBars">
-              <option value="1000">1,000</option>
-              <option value="3000">3,000</option>
-              <option value="5000" selected>5,000</option>
-              <option value="10000">10,000</option>
-              <option value="20000">20,000</option>
-            </select>
-          </label>
-        </div>
-        <button type="button" class="btn" id="binanceLoad">Load from Binance</button>
-        <p class="hint">Spot market candles, timestamps in UTC. Sessions roll over at 00:00 UTC.</p>
-      </div>
-
-      <div class="source-pane" data-pane="csv" hidden>
-        <label class="dropzone" id="dropzone" for="csvFile">
-          <input type="file" id="csvFile" accept=".csv,.txt,text/csv">
-          <strong>Choose a CSV file</strong>
-          <span>or drop it here</span>
+    <!-- Market -->
+    <section class="panel" aria-labelledby="h-market">
+      <div class="panel-head"><h2 id="h-market">Market</h2></div>
+      <div class="field-row">
+        <label class="field"><span>Symbol</span><input id="mkt-symbol" type="text" autocomplete="off" spellcheck="false" placeholder="BTCUSDT"></label>
+        <label class="field"><span>Timeframe</span>
+          <select id="mkt-timeframe">
+            <option value="1m">1 minute</option>
+            <option value="5m">5 minutes</option>
+            <option value="15m">15 minutes</option>
+            <option value="30m">30 minutes</option>
+            <option value="1h">1 hour</option>
+            <option value="4h">4 hours</option>
+            <option value="1d">1 day</option>
+          </select>
         </label>
-        <div class="server-csv" id="serverCsvBox" hidden>
-          <label class="field"><span>Files in <code>data/</code></span><select id="serverCsvSelect"></select></label>
-          <button type="button" class="btn" id="serverCsvLoad">Load file</button>
-        </div>
-        <p class="hint">Columns: Date (or Datetime / Timestamp), Open, High, Low, Close, Volume. Exports from Yahoo, TradingView, Binance and MetaTrader work as-is.</p>
       </div>
-
       <div class="field-row range-row">
-        <label class="field"><span>From</span><input type="date" id="rangeFrom"></label>
-        <label class="field"><span>To</span><input type="date" id="rangeTo"></label>
+        <label class="field"><span>From</span><input type="date" id="mkt-from"></label>
+        <label class="field"><span>To</span><input type="date" id="mkt-to"></label>
       </div>
+      <p class="hint">Trader.dev tests Bybit USDT perpetuals: BTCUSDT, ETHUSDT, SOLUSDT and the rest of its coverage. Leave the dates empty for the longest window it has.</p>
       <p class="load-status" id="loadStatus" role="status" aria-live="polite"></p>
     </section>
 
@@ -155,39 +79,10 @@
     <!-- Execution -->
     <section class="panel" aria-labelledby="h-exec">
       <div class="panel-head"><h2 id="h-exec">Execution</h2></div>
-      <div class="field-row">
-        <label class="field"><span>Starting capital ($)</span><input type="number" id="set-capital" min="100" step="100"></label>
-        <label class="field"><span>Fill orders at</span>
-          <select id="set-fillOn">
-            <option value="open">Next bar's open</option>
-            <option value="close">Signal bar's close</option>
-          </select>
-        </label>
-      </div>
-      <div class="field-row">
-        <label class="field"><span>Commission (% per side)</span><input type="number" id="set-commissionPct" min="0" step="0.005"></label>
-        <label class="field"><span>Slippage (% per side)</span><input type="number" id="set-slippagePct" min="0" step="0.005"></label>
-      </div>
+      <label class="field"><span>Starting capital ($)</span><input type="number" id="set-capital" min="100" step="100"></label>
       <label class="check"><input type="checkbox" id="set-allowShorts"> Allow short selling</label>
-      <p class="hint">Typical costs: US stocks 0–0.01% commission, crypto 0.04–0.1%.</p>
+      <p class="hint">Trader.dev runs every backtest at 100% of equity per trade, 0.05% commission a side, and fills on the signal bar's close. Those are fixed, so the app has no controls for them.</p>
     </section>
-
-    <details class="panel fold" id="fold-size">
-      <summary><h2>Position size</h2><span class="fold-badge" id="badge-size"></span></summary>
-      <div class="fold-body">
-        <label class="field"><span>Size each trade by</span>
-          <select id="set-sizing">
-            <option value="equity">% of equity</option>
-            <option value="risk">Risk per trade (% of equity lost at the stop)</option>
-          </select>
-        </label>
-        <div class="field-row">
-          <label class="field"><span id="sizePctLabel">Position size (% equity)</span><input type="number" id="set-sizePct" min="1" max="1000" step="1"></label>
-          <label class="field"><span>Risk per trade (%)</span><input type="number" id="set-riskPct" min="0.05" max="100" step="0.25"></label>
-        </div>
-        <p class="hint">Risk per trade sizes each position so that hitting the stop costs that % of your account. It needs a stop (from the strategy, ATR or %); position size becomes the most one trade may use.</p>
-      </div>
-    </details>
 
     <details class="panel fold" id="fold-exits">
       <summary><h2>Stops and targets</h2><span class="fold-badge" id="badge-exits"></span></summary>
@@ -206,30 +101,21 @@
           <label class="field"><span>Break-even after (R)</span><input type="number" id="set-breakEvenR" min="0" step="0.25" placeholder="off"></label>
           <label class="field"><span>Time stop (bars)</span><input type="number" id="set-maxBarsInTrade" min="0" step="1" placeholder="off"></label>
         </div>
-        <label class="check"><input type="checkbox" id="set-flatAtSessionEnd"> Close positions at the end of each day (intraday data)</label>
         <p class="hint">1R is the distance from entry to the stop. A strategy's own stop and target come first; then the ATR stop beats stop loss %, and reward:risk beats take profit %. Reward:risk and break-even need a stop.</p>
       </div>
     </details>
 
     <details class="panel fold" id="fold-filters">
-      <summary><h2>Entry filters</h2><span class="fold-badge" id="badge-filters"></span></summary>
+      <summary><h2>Entry filter</h2><span class="fold-badge" id="badge-filters"></span></summary>
       <div class="fold-body">
-        <div class="field-row">
-          <label class="field"><span>Enter from</span><input type="time" id="set-entryStart"></label>
-          <label class="field"><span>Enter until</span><input type="time" id="set-entryEnd"></label>
-        </div>
-        <div class="field-row three">
-          <label class="field"><span>Trend SMA</span><input type="number" id="set-trendFilterLength" min="0" step="1" placeholder="off"></label>
-          <label class="field"><span>Max trades / day</span><input type="number" id="set-maxTradesPerDay" min="0" step="1" placeholder="off"></label>
-          <label class="field"><span>Daily loss limit %</span><input type="number" id="set-dailyLossPct" min="0" step="0.1" placeholder="off"></label>
-        </div>
-        <p class="hint">Filters only block new entries; exits always go through. Trading hours use exchange time and apply to intraday data. Trend SMA: longs only above it, shorts only below. The daily loss limit closes the position and stops trading until the next day.</p>
+        <label class="field"><span>Trend SMA</span><input type="number" id="set-trendFilterLength" min="0" step="1" placeholder="off"></label>
+        <p class="hint">Longs only above this SMA, shorts only below it. It blocks new entries; exits always go through.</p>
       </div>
     </details>
 
     <div class="run-dock">
-      <button type="button" class="btn primary" id="runBtn">Run backtest</button>
-      <label class="check compact"><input type="checkbox" id="autoRun" checked> Auto-run</label>
+      <button type="button" class="btn primary" id="runBtn">Run on Trader.dev</button>
+      <span class="hint inline" id="creditNote"></span>
     </div>
   </aside>
 
@@ -248,41 +134,36 @@
       <button type="button" class="btn ghost small" id="errorGoto">Show in editor</button>
     </div>
 
+    <div class="notice-box" id="noticeBox" hidden>
+      <strong>Trader.dev changed this run</strong>
+      <ul id="noticeList"></ul>
+    </div>
+
     <div class="kpis" id="kpis"></div>
 
     <nav class="tabs" role="tablist" aria-label="Results">
-      <button type="button" role="tab" id="tab-chart" data-tab="chart" aria-selected="true">Chart</button>
+      <button type="button" role="tab" id="tab-equity" data-tab="equity" aria-selected="true">Equity</button>
       <button type="button" role="tab" id="tab-trades" data-tab="trades" aria-selected="false">Trades <span class="count" id="tradeCount">0</span></button>
       <button type="button" role="tab" id="tab-monthly" data-tab="monthly" aria-selected="false">Monthly returns</button>
       <button type="button" role="tab" id="tab-optimize" data-tab="optimize" aria-selected="false">Optimize</button>
       <button type="button" role="tab" id="tab-code" data-tab="code" aria-selected="false">Code</button>
+      <button type="button" role="tab" id="tab-pine" data-tab="pine" aria-selected="false">Pine sent</button>
     </nav>
 
-    <!-- Chart -->
-    <section class="tab-panel" data-panel="chart" role="tabpanel" aria-labelledby="tab-chart">
+    <!-- Equity -->
+    <section class="tab-panel" data-panel="equity" role="tabpanel" aria-labelledby="tab-equity">
       <div class="card chart-card">
         <div class="card-head">
-          <h3>Price and signals</h3>
+          <h3>Equity and drawdown</h3>
           <div class="card-tools">
-            <label class="check compact"><input type="checkbox" id="showMarkers" checked> Trade markers</label>
+            <a class="btn ghost small" id="reportLink" href="#" target="_blank" rel="noopener" hidden>Full report on Trader.dev</a>
             <button type="button" class="btn ghost small" id="fitBtn">Fit all</button>
-          </div>
-        </div>
-        <div class="chart-box price" id="priceChart"><div class="legend" id="priceLegend"></div></div>
-        <div class="chart-box osc" id="oscChart" hidden><div class="legend" id="oscLegend"></div></div>
-      </div>
-      <div class="card chart-card">
-        <div class="card-head">
-          <h3>Equity</h3>
-          <div class="legend-static" id="equityKey">
-            <span class="key"><i class="line-key s-strategy"></i>Strategy</span>
-            <span class="key"><i class="line-key s-bh"></i>Buy and hold</span>
           </div>
         </div>
         <div class="chart-box equity" id="equityChart"><div class="legend" id="equityLegend"></div></div>
         <div class="chart-box dd" id="ddChart"><div class="legend" id="ddLegend"></div></div>
       </div>
-      <p class="fineprint">Scroll to zoom, drag to pan. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a>.</p>
+      <p class="fineprint">Scroll to zoom, drag to pan. The candle chart with every fill on it is on <a href="#" id="reportLink2" target="_blank" rel="noopener">the Trader.dev report</a>. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a>.</p>
     </section>
 
     <!-- Trades -->
@@ -295,7 +176,7 @@
         <div class="card-head">
           <h3>Trade list</h3>
           <div class="card-tools">
-            <span class="hint inline">Click a row to see it on the chart.</span>
+            <span class="hint inline">Click a row to see it on the equity curve.</span>
             <button type="button" class="btn ghost small" id="exportTradesBtn">Download CSV</button>
           </div>
         </div>
@@ -303,14 +184,15 @@
           <table class="data-table" id="tradesTable">
             <thead><tr>
               <th>#</th><th>Side</th><th>Entry</th><th class="num">Entry price</th><th>Exit</th><th class="num">Exit price</th>
-              <th class="num">Bars</th><th class="num">P&amp;L</th><th class="num">Return</th><th class="num">R</th>
-              <th class="num" title="Maximum adverse excursion: the worst point against you while the trade was open">MAE</th>
-              <th class="num" title="Maximum favourable excursion: the best point in your favour while the trade was open">MFE</th><th>Exit reason</th>
+              <th class="num">Bars</th><th class="num">P&amp;L</th><th class="num">Return</th>
+              <th class="num" title="The worst the trade was while it was open">Worst</th>
+              <th class="num" title="The best the trade was while it was open">Best</th>
+              <th class="num">Commission</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
-        <p class="empty" id="tradesEmpty" hidden>No trades. Try loosening the entry conditions or loading more data.</p>
+        <p class="empty" id="tradesEmpty" hidden>No trades. Try loosening the entry conditions or widening the date range.</p>
       </div>
       <div class="card" id="excursionCard">
         <div class="card-head">
@@ -323,19 +205,15 @@
         <ul class="insights" id="excursionInsights"></ul>
         <div class="scatter-pair">
           <figure class="scatter">
-            <figcaption>Worst point against you (MAE) vs final result</figcaption>
+            <figcaption>Worst point against you vs final result</figcaption>
             <div id="maeChart"></div>
           </figure>
           <figure class="scatter">
-            <figcaption>Best point in your favour (MFE) vs final result</figcaption>
+            <figcaption>Best point in your favour vs final result</figcaption>
             <div id="mfeChart"></div>
           </figure>
         </div>
         <p class="hint">Each dot is a trade. Left: winners bunched close to 0 means a tighter stop would have kept them while cutting losers short. Right: losers far to the right were in profit before turning around; a target or break-even stop could have saved them.</p>
-      </div>
-      <div class="card" id="logCard" hidden>
-        <div class="card-head"><h3>Strategy log</h3><span class="hint inline">Output of ctx.log()</span></div>
-        <pre class="log" id="logBox"></pre>
       </div>
     </section>
 
@@ -377,21 +255,20 @@
             <legend>Ranking</legend>
             <label class="field"><span>Rank by</span>
               <select id="optObjective">
-                <option value="sharpe">Sharpe ratio</option>
-                <option value="totalReturn">Net return</option>
-                <option value="calmar">CAGR ÷ max drawdown</option>
+                <option value="sharpeRatio">Sharpe ratio</option>
+                <option value="netProfit">Net profit</option>
                 <option value="profitFactor">Profit factor</option>
-                <option value="sortino">Sortino ratio</option>
-                <option value="winRate">Win rate</option>
+                <option value="sortinoRatio">Sortino ratio</option>
+                <option value="winRatePct">Win rate</option>
+                <option value="maxDrawdownPct">Smallest max drawdown</option>
               </select>
             </label>
             <div class="field-row">
-              <label class="field"><span>Optimize on first</span>
-                <select id="optSplit">
-                  <option value="100">100% of data</option>
-                  <option value="80">80%, test on rest</option>
-                  <option value="70" selected>70%, test on rest</option>
-                  <option value="50">50%, test on rest</option>
+              <label class="field"><span>Keep best</span>
+                <select id="optTopN">
+                  <option value="5">5 results</option>
+                  <option value="10" selected>10 results</option>
+                  <option value="20">20 results</option>
                 </select>
               </label>
               <label class="field"><span>Min. trades</span><input type="number" id="optMinTrades" value="10" min="0" step="1"></label>
@@ -401,13 +278,12 @@
         <div class="opt-run">
           <button type="button" class="btn primary" id="optRunBtn">Run sweep</button>
           <span class="hint inline" id="optCount"></span>
-          <div class="progress" id="optProgress" hidden><i></i></div>
+          <div class="progress indeterminate" id="optProgress" hidden><i></i></div>
         </div>
-        <p class="hint">Holding back the last part of the data and checking the best settings on it is the quickest way to spot curve-fitting. A setting that only works in-sample is luck.</p>
+        <p class="hint">The sweep runs on Trader.dev and each combination is a backtest that costs one credit. Only the parameters the generated Pine exposes can be swept: the strategy's own numbers, plus whichever stops, targets and filters are switched on.</p>
       </div>
       <div class="card" id="optResults" hidden>
-        <div class="card-head"><h3 id="optHeatTitle">Results</h3><span class="hint inline">Click a cell or row to apply those parameters.</span></div>
-        <div class="table-wrap"><div class="opt-heat" id="optHeat"></div></div>
+        <div class="card-head"><h3 id="optHeatTitle">Results</h3><span class="hint inline">Click a row to apply those values.</span></div>
         <div class="table-wrap">
           <table class="data-table" id="optTable">
             <thead></thead>
@@ -451,50 +327,70 @@
         <aside class="card api-card">
           <div class="card-head"><h3>Strategy API</h3></div>
           <div class="api">
-            <p>A strategy is one JavaScript file in <code>strategies/</code>:</p>
+            <p>A strategy is one JavaScript file in <code>strategies/</code> that describes its parameters and returns the Pine Script Trader.dev runs:</p>
 <pre><code>export default {
   name, description,
   params: { len: 20 },
-  setup({ data, params, ta, plot }) {
-    return { /* indicators */ };
+  pine({ p }) {
+    return {
+      body: `ma = ta.sma(close, ${p.len})`,
+      longEntry: 'ta.crossover(close, ma)',
+      shortEntry: 'ta.crossunder(close, ma)',
+    };
   },
-  onBar(ctx) { /* orders */ },
 };</code></pre>
             <h4>params</h4>
-            <p><code>len: 20</code> or <code>{ value, min, max, step, label }</code>. Booleans become checkboxes, <code>{ value: 'EMA', options: [...] }</code> a dropdown.</p>
-            <h4>setup()</h4>
-            <p>Runs once. <code>data.open/high/low/close/volume/time</code> are arrays. Return the indicators you need; they arrive as <code>ctx.ind</code>.</p>
-            <p><code>plot(name, series, { color, style, pane })</code> draws a line. <code>style</code>: line, dashed, dots, histogram. <code>pane: 'lower'</code> puts it under the price. Colours: vwap, band, accent, up, down or any CSS colour.</p>
-            <h4>onBar(ctx)</h4>
-            <p>Runs after each bar closes. <code>ctx.i</code>, <code>ctx.close</code> (and open, high, low, volume, time), <code>ctx.ind</code>, <code>ctx.params</code>, <code>ctx.equity</code>.</p>
-            <p>Position: <code>ctx.isFlat</code>, <code>ctx.isLong</code>, <code>ctx.isShort</code>, <code>ctx.position.entryPrice</code>, <code>.barsHeld</code>, <code>.pnlPct</code>, <code>.risk</code> (1R in price).</p>
-            <p>Session: <code>ctx.newSession</code>, <code>ctx.lastBarOfSession</code>, <code>ctx.sessionBar</code>, <code>ctx.hour</code>, <code>ctx.minute</code>, <code>ctx.dayOfWeek</code>.</p>
-            <h4>Orders</h4>
-            <p><code>ctx.long(opts)</code>, <code>ctx.short(opts)</code>, <code>ctx.exit(reason)</code>, <code>ctx.cancel()</code>, <code>ctx.setStop(price)</code>, <code>ctx.setTarget(price)</code>.</p>
-            <p><code>opts</code>: <code>stop</code>, <code>target</code> (prices), <code>trail</code> (%), <code>size</code> (0–1 of equity), <code>label</code>, <code>atClose</code>. Your own stop and target win over the sidebar's stop and target settings.</p>
-            <p>Orders fill at the next bar's open. Stops and targets trigger inside the bar; a gap fills at the open.</p>
-            <h4>Helpers</h4>
-            <p><code>ctx.crossOver(a, b)</code>, <code>ctx.crossUnder(a, b)</code>, <code>ctx.prev(series, n)</code>, <code>ctx.log(...)</code>.</p>
-            <p><code>ta.</code>sma ema wma rma stdev highest lowest rsi macd stoch roc change zscore bollinger donchian keltner atr trueRange adx obv hlc3 vwap vwapBands rollingVwap sessionStart sessionEnd sessionBar crossover crossunder</p>
-            <p>Keep per-run state inside the object <code>setup()</code> returns, not in variables outside the strategy.</p>
+            <p><code>len: 20</code> or <code>{ value, min, max, step, label }</code>. Booleans become checkboxes, <code>{ value: 'EMA', options: [...] }</code> a dropdown here and a plain string input in the Pine, because the engine's parser rejects an options list. Every parameter becomes a Pine input, which is what lets the Optimize tab sweep it.</p>
+            <h4>pine({ p, params })</h4>
+            <p><code>p.len</code> is the <em>name</em> of that parameter's Pine input (<code>p_len</code>), so put it straight into the code. <code>params.len</code> is its current value, for when you need the number itself at generation time.</p>
+            <p>Return an object:</p>
+            <ul>
+              <li><code>body</code> — Pine that computes your indicators and any helper variables.</li>
+              <li><code>longEntry</code>, <code>shortEntry</code> — Pine expressions that are true when a trade opens. At least one is required.</li>
+              <li><code>longExit</code>, <code>shortExit</code> — true when the position closes on a signal.</li>
+              <li><code>longStop</code>, <code>shortStop</code>, <code>longTarget</code>, <code>shortTarget</code> — price levels read at entry. They win over the sidebar's stop and target; return <code>na</code> to fall back to it.</li>
+              <li><code>plots</code> — <code>[{ title, expr }]</code>, drawn on the Trader.dev report.</li>
+            </ul>
+            <h4>What the app adds</h4>
+            <p>The <code>strategy()</code> header, the inputs, the entry and exit orders, and whichever stops, targets and filters are switched on in the sidebar. The Pine sent tab shows the finished script.</p>
+            <h4>Pine the engine allows</h4>
+            <p><code>ta.</code>sma ema rma wma vwma hma swma alma linreg median mode percentile_nearest_rank percentile_linear_interpolation percentrank rsi stoch cci cmo mfi roc mom change tsi wpr cog macd bb bbw kc kcw dmi supertrend sar crossover crossunder cross barssince valuewhen rising falling pivothigh pivotlow highest lowest highestbars lowestbars range stdev dev variance correlation cum max min atr tr vwap obv pvt accdist iii wad wvad nvi pvi</p>
+            <p>Also <code>open high low close volume time bar_index hl2 hlc3 ohlc4</code>, <code>na() nz() fixnan()</code>, <code>math.*</code>, <code>var</code>, <code>:=</code>, <code>if</code>/<code>for</code>, and history access with <code>[]</code>.</p>
+            <p>Not available: <code>request.security</code>, arrays and maps, user-defined functions, <code>strategy.cancel</code>, <code>strategy.order</code> and pyramiding above 1.</p>
+            <h4>Sessions</h4>
+            <p>Trader.dev's markets trade around the clock, so there is no trading session to anchor to. For a daily anchor, work it out from <code>time</code>: <code>newDay = math.floor(time / 86400000) != math.floor(time[1] / 86400000)</code>. The two VWAP strategies do this.</p>
           </div>
         </aside>
       </div>
     </section>
+
+    <!-- Pine -->
+    <section class="tab-panel" data-panel="pine" role="tabpanel" aria-labelledby="tab-pine" hidden>
+      <div class="card code-card">
+        <div class="code-toolbar">
+          <div class="file-chip"><span id="pineState">Pine for the current settings</span></div>
+          <div class="btn-row">
+            <button type="button" class="btn small" id="pineCopyBtn">Copy</button>
+          </div>
+        </div>
+        <div class="editor">
+          <pre class="gutter" id="pineGutter" aria-hidden="true">1</pre>
+          <textarea id="pineView" spellcheck="false" readonly aria-label="Generated Pine Script" wrap="off"></textarea>
+        </div>
+        <p class="code-msg" id="pineMsg" role="status" aria-live="polite"></p>
+      </div>
+      <p class="fineprint">This is rebuilt from the strategy and the sidebar every time you run, so what you see here is what Trader.dev ran. Paste it into TradingView to compare: order size 100% of equity, margin 100/100, pyramiding 1, commission 0%, recalculate on bar close, same symbol, timeframe and dates.</p>
+    </section>
   </main>
 </div>
-<!-- /build:body -->
 
-<!-- build:js -->
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
 <script src="js/format.js"></script>
-<script src="js/indicators.js"></script>
 <script src="js/metrics.js"></script>
-<script src="js/engine.js"></script>
-<script src="js/data.js"></script>
-<script src="js/optimizer.js"></script>
+<script src="js/strategy.js"></script>
+<script src="js/pine.js"></script>
+<script src="js/traderdev.js"></script>
 <script src="js/charts.js"></script>
 <script src="js/app.js"></script>
-<!-- /build:js -->
 </body>
 </html>

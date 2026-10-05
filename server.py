@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-VWAP Lab: local backtesting server.
+VWAP Lab: local server for the Trader.dev backtester.
 
+    export TRADERDEV_API_KEY=pk_...
     python3 server.py            # then open http://localhost:8000
 
 Serves the web app in ./web, stores strategies as .js files in ./strategies,
-lists CSV files you drop into ./data, and proxies market data from Yahoo
-Finance and Binance (browsers can't call those APIs directly).
+and forwards backtests to Trader.dev, which runs every backtest.
+
+The browser never sees the API key: it calls this server, and this server
+calls Trader.dev with the key from the environment.
 
 Standard library only. Python 3.8+.
 """
@@ -17,34 +20,43 @@ import re
 import sys
 import tempfile
 import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from datetime import datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 STRATEGY_DIR = ROOT / "strategies"
-DATA_DIR = ROOT / "data"
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-FILE_RE = re.compile(r"^[A-Za-z0-9_. -]{1,128}\.(csv|txt)$", re.IGNORECASE)
-SYMBOL_RE = re.compile(r"^[A-Za-z0-9.^=_-]{1,32}$")
 MAX_STRATEGY_BYTES = 512 * 1024
-# Yahoo answers a bare "Mozilla/5.0" but rate-limits (429) full browser strings and python-urllib.
-USER_AGENT = "Mozilla/5.0"
 
-YAHOO_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"}
-YAHOO_DAILY = {"1d", "5d", "1wk", "1mo", "3mo"}
-YAHOO_RANGES = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"}
-BINANCE_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"}
-BINANCE_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+# Trader.dev speaks MCP over HTTP. The endpoint is configurable because the
+# service may move it; TRADERDEV_MCP_URL overrides the default.
+TRADERDEV_URL = os.environ.get("TRADERDEV_MCP_URL", "https://mcp-api.trader.dev/mcp")
+TRADERDEV_KEY_VARS = ("TRADERDEV_API_KEY", "TRADER_DEV_API_KEY")
+
+# Only these Trader.dev tools can be reached from the browser.
+ALLOWED_TOOLS = {
+    "whoami": 30,
+    "get_credits": 30,
+    "get_pine_codegen_rules": 30,
+    "plan_backtest_window": 60,
+    "quick_backtest": 180,
+    "get_backtest_result": 120,
+    "get_trades": 60,
+    "get_equity_curve": 60,
+    "list_strategies": 60,
+    "get_strategy": 60,
+    "optimize_strategy": 900,
+}
+
+PROTOCOL_VERSION = "2025-06-18"
 
 
 class ApiError(Exception):
@@ -53,161 +65,225 @@ class ApiError(Exception):
         self.status = status
 
 
-# --------------------------------------------------------------------------- HTTP client
+def traderdev_key():
+    for var in TRADERDEV_KEY_VARS:
+        key = (os.environ.get(var) or "").strip()
+        if key:
+            return key
+    return ""
 
 
-def http_json(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "replace")
+# --------------------------------------------------------------------------- Trader.dev (MCP over HTTP)
+
+
+class TraderDev:
+    """Minimal MCP streamable-HTTP client: initialize once, then call tools.
+
+    Not a general MCP implementation — just enough to call the handful of
+    Trader.dev tools the app needs, with one session reused across requests.
+    """
+
+    def __init__(self, url, key):
+        self.url = url
+        self.key = key
+        self.session_id = None
+        self._next_id = 0
+        self._lock = threading.Lock()
+
+    # ---- transport
+
+    def _headers(self):
+        h = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {self.key}",
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
+            "User-Agent": f"VWAPLab/{VERSION}",
+        }
+        if self.session_id:
+            h["Mcp-Session-Id"] = self.session_id
+        return h
+
+    def _send(self, payload, timeout):
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(self.url, data=body, headers=self._headers(), method="POST")
         try:
-            return json.loads(body)  # APIs put the useful message in the JSON body
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                sid = resp.headers.get("Mcp-Session-Id")
+                if sid:
+                    self.session_id = sid
+                raw = resp.read().decode("utf-8", "replace")
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                return resp.status, ctype, raw
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", "replace")
+            return e.code, (e.headers.get("Content-Type") or "").lower(), raw
+        except urllib.error.URLError as e:
+            reason = str(getattr(e, "reason", e))
+            if "CERTIFICATE_VERIFY_FAILED" in reason:
+                raise ApiError(
+                    "Python could not verify Trader.dev's SSL certificate. On macOS, run "
+                    "'Install Certificates.command' from your Python folder in Applications, then restart the server.",
+                    502,
+                )
+            raise ApiError(f"Could not reach Trader.dev at {self.url}: {reason}", 502)
+        except (TimeoutError, OSError) as e:
+            raise ApiError(f"Trader.dev did not answer in time: {e}", 504)
+
+    @staticmethod
+    def _parse(status, ctype, raw):
+        """A JSON-RPC response, whether it arrived as JSON or as one SSE event."""
+        if "text/event-stream" in ctype:
+            chunks = []
+            for line in raw.splitlines():
+                if line.startswith("data:"):
+                    chunks.append(line[5:].strip())
+            raw = "\n".join(chunks)
+        if not raw.strip():
+            return None
+        try:
+            return json.loads(raw)
         except ValueError:
-            if e.code == 429:
-                raise ApiError("The data provider is rate-limiting requests. Wait a minute and try again.", 429)
-            raise ApiError(f"Data provider returned HTTP {e.code}.", 502)
-    except urllib.error.URLError as e:
-        reason = str(getattr(e, "reason", e))
-        if "CERTIFICATE_VERIFY_FAILED" in reason:
+            snippet = raw.strip()[:200]
+            raise ApiError(f"Trader.dev sent a reply this app could not read (HTTP {status}): {snippet}", 502)
+
+    def _rpc(self, method, params, timeout):
+        self._next_id += 1
+        payload = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
+        status, ctype, raw = self._send(payload, timeout)
+        if status == 401 or status == 403:
             raise ApiError(
-                "Python could not verify the data provider's SSL certificate. On macOS, run "
-                "'Install Certificates.command' from your Python folder in Applications, then restart the server.",
-                502,
+                "Trader.dev rejected the API key. Check TRADERDEV_API_KEY, then restart the server.", 401
             )
-        raise ApiError(f"Could not reach the data provider: {reason}", 502)
-    except (TimeoutError, OSError) as e:
-        raise ApiError(f"Network error while fetching data: {e}", 502)
+        if status == 404 and self.session_id:
+            raise ApiError("The Trader.dev session expired.", 409)
+        body = self._parse(status, ctype, raw)
+        if status >= 400:
+            msg = ""
+            if isinstance(body, dict):
+                msg = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else body.get("message")
+            raise ApiError(msg or f"Trader.dev returned HTTP {status}.", 502)
+        if not isinstance(body, dict):
+            raise ApiError("Trader.dev sent an empty reply.", 502)
+        if body.get("error"):
+            err = body["error"]
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise ApiError(f"Trader.dev: {msg}", 502)
+        return body.get("result") or {}
 
+    def _notify(self, method, params=None):
+        payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        self._send(payload, 30)
 
-# --------------------------------------------------------------------------- market data
-
-
-def _local_offset_fn(tz_name, fallback_offset):
-    """Return f(unix_ts) -> UTC offset in seconds for the exchange timezone (DST aware)."""
-    try:
-        from zoneinfo import ZoneInfo  # Python 3.9+; needs the tzdata package on Windows
-
-        tz = ZoneInfo(tz_name)
-        return lambda ts: int(datetime.fromtimestamp(ts, tz).utcoffset().total_seconds())
-    except Exception:
-        return lambda ts: fallback_offset
-
-
-def fetch_yahoo(symbol, interval, rng, adjusted):
-    if not SYMBOL_RE.match(symbol):
-        raise ApiError("That doesn't look like a ticker symbol.")
-    if interval not in YAHOO_INTERVALS:
-        raise ApiError(f"Unsupported interval {interval}.")
-    if rng not in YAHOO_RANGES:
-        raise ApiError(f"Unsupported range {rng}.")
-    yi = "60m" if interval == "1h" else interval
-    params = {"interval": yi, "range": rng, "includePrePost": "false", "events": "div,splits"}
-    if rng == "max" and interval in YAHOO_DAILY:
-        # range=max comes back as monthly bars; an explicit window keeps the requested interval
-        del params["range"]
-        params.update(period1=0, period2=int(time.time()))
-    query = urllib.parse.urlencode(params)
-    data = None
-    for host in ("query1", "query2"):
-        url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}?{query}"
-        try:
-            data = http_json(url)
-            break
-        except ApiError as e:
-            if e.status != 429 or host == "query2":
-                raise
-    chart = (data or {}).get("chart") or {}
-    if chart.get("error"):
-        err = chart["error"]
-        msg = err.get("description") or err.get("code") or "Yahoo returned an error."
-        raise ApiError(f"Yahoo: {msg}", 404 if err.get("code") == "Not Found" else 400)
-    results = chart.get("result") or []
-    if not results:
-        raise ApiError(f"Yahoo returned no data for {symbol}.", 404)
-    res = results[0]
-    meta = res.get("meta") or {}
-    # For ranges longer than its intraday limits, Yahoo can silently answer with coarser
-    # bars (e.g. monthly for 15m + max). Refuse that instead of mislabelling the data.
-    got = meta.get("dataGranularity")
-    if got and got != yi and not (yi == "60m" and got == "1h"):
-        hint = (
-            "Pick a shorter range, such as 10 years."
-            if interval in YAHOO_DAILY
-            else "Intraday history is limited: 1m covers 7 days, 2m-30m cover 60 days, 1h covers 2 years. "
-            "Pick a shorter range or a daily interval."
+    def _handshake(self):
+        self.session_id = None
+        self._rpc(
+            "initialize",
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "vwap-lab", "version": VERSION},
+            },
+            30,
         )
-        raise ApiError(f"Yahoo has no {interval} data for range '{rng}' (it sent {got} bars instead). {hint}", 400)
-    stamps = res.get("timestamp") or []
-    quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
-    adj = (((res.get("indicators") or {}).get("adjclose") or [{}])[0] or {}).get("adjclose")
-    offset_of = _local_offset_fn(meta.get("exchangeTimezoneName") or "UTC", int(meta.get("gmtoffset") or 0))
-    daily = interval in YAHOO_DAILY
-    cols = [quote.get(k) or [] for k in ("open", "high", "low", "close", "volume")]
-    bars = []
-    for i, ts in enumerate(stamps):
-        try:
-            o, h, l, c, v = (col[i] for col in cols)
-        except IndexError:
-            continue
-        if None in (o, h, l, c) or c <= 0:
-            continue
-        if adjusted and adj and i < len(adj) and adj[i]:
-            r = adj[i] / c
-            o, h, l, c = o * r, h * r, l * r, adj[i]
-        local = ts + offset_of(ts)  # exchange wall-clock time, stored as UTC
-        if daily:
-            local -= local % 86400
-        bars.append([local, o, h, l, c, v or 0])
-    if not bars:
-        raise ApiError(f"Yahoo returned no bars for {symbol} with interval {interval} and range {rng}.", 404)
-    return {
-        "symbol": meta.get("symbol") or symbol,
-        "name": meta.get("longName") or meta.get("shortName") or symbol,
-        "currency": meta.get("currency"),
-        "timezone": meta.get("exchangeTimezoneName"),
-        "bars": bars,
-    }
+        self._notify("notifications/initialized")
+
+    # ---- tools
+
+    def call_tool(self, name, args, timeout):
+        with self._lock:
+            if not self.session_id:
+                self._handshake()
+            try:
+                result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
+            except ApiError as e:
+                if e.status != 409:
+                    raise
+                self._handshake()  # session expired mid-run: open a new one and retry once
+                result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
+        return self._unwrap(name, result)
+
+    @staticmethod
+    def _unwrap(name, result):
+        """Turn an MCP tool result into the JSON payload the app wants.
+
+        Trader.dev answers with text blocks; the useful part is the one that
+        parses as JSON. Anything else is passed through as text so the UI can
+        show it rather than swallowing it.
+        """
+        texts = []
+        for block in result.get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(block.get("text") or "")
+        if result.get("isError"):
+            raise ApiError(f"Trader.dev could not run {name}: {' '.join(texts).strip()[:500]}", 502)
+        parsed = None
+        for text in texts:
+            stripped = text.strip()
+            if not stripped or stripped[0] not in "{[":
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except ValueError:
+                continue
+        if parsed is None and isinstance(result.get("structuredContent"), (dict, list)):
+            parsed = result["structuredContent"]
+        notes = [t.strip() for t in texts if t.strip() and (not t.strip() or t.strip()[0] not in "{[")]
+        if parsed is None:
+            raise ApiError(f"Trader.dev's answer to {name} held no data: {' '.join(notes)[:300]}", 502)
+        return {"result": parsed, "notes": notes}
 
 
-def fetch_binance(symbol, interval, count):
-    if not re.match(r"^[A-Z0-9]{3,20}$", symbol):
-        raise ApiError("Use a Binance pair like BTCUSDT.")
-    if interval not in BINANCE_INTERVALS:
-        raise ApiError(f"Unsupported interval {interval}.")
-    count = max(50, min(int(count), 20000))
-    last_error = None
-    for host in BINANCE_HOSTS:
-        rows = []
-        end = None
-        try:
-            while len(rows) < count:
-                limit = min(1000, count - len(rows))
-                params = {"symbol": symbol, "interval": interval, "limit": limit}
-                if end is not None:
-                    params["endTime"] = end
-                page = http_json(f"{host}/api/v3/klines?{urllib.parse.urlencode(params)}")
-                if isinstance(page, dict):
-                    raise ApiError(f"Binance: {page.get('msg') or 'request failed'}", 400)
-                if not page:
-                    break
-                rows = page + rows
-                end = page[0][0] - 1
-                if len(page) < limit:
-                    break
-        except ApiError as e:
-            last_error = e
-            if e.status == 400:
-                raise
-            continue
-        bars = [[r[0] // 1000, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])] for r in rows[-count:]]
-        return {"symbol": symbol, "bars": bars}
-    raise last_error or ApiError("Could not reach Binance.", 502)
+_client = None
+_client_lock = threading.Lock()
 
 
-# --------------------------------------------------------------------------- strategies & datasets
+def traderdev_client():
+    global _client
+    key = traderdev_key()
+    if not key:
+        raise ApiError(
+            "No Trader.dev API key. Set TRADERDEV_API_KEY to your pk_... key and restart the server.", 503
+        )
+    with _client_lock:
+        if _client is None or _client.key != key or _client.url != TRADERDEV_URL:
+            _client = TraderDev(TRADERDEV_URL, key)
+        return _client
+
+
+def traderdev_call(name, args):
+    if name not in ALLOWED_TOOLS:
+        raise ApiError(f"{name} is not one of the Trader.dev calls this app makes.", 400)
+    if not isinstance(args, dict):
+        raise ApiError("Tool arguments must be an object.")
+    return traderdev_client().call_tool(name, args, ALLOWED_TOOLS[name])
+
+
+def traderdev_status():
+    """Whether the app can reach Trader.dev, without spending a credit."""
+    if not traderdev_key():
+        return {
+            "ok": False,
+            "configured": False,
+            "url": TRADERDEV_URL,
+            "error": "No Trader.dev API key. Set TRADERDEV_API_KEY to your pk_... key and restart the server.",
+        }
+    try:
+        body = traderdev_call("whoami", {})
+        who = body["result"]
+        user = who.get("user") or {}
+        return {
+            "ok": True,
+            "configured": True,
+            "url": TRADERDEV_URL,
+            "email": user.get("email"),
+            "tier": user.get("displayTier") or user.get("tier"),
+        }
+    except ApiError as e:
+        return {"ok": False, "configured": True, "url": TRADERDEV_URL, "error": str(e)}
+
+
+# --------------------------------------------------------------------------- strategies
 
 
 def list_strategies():
@@ -245,12 +321,6 @@ def delete_strategy(sid):
     if not target.exists():
         raise ApiError("Strategy not found.", 404)
     target.unlink()
-
-
-def list_datasets():
-    if not DATA_DIR.exists():
-        return []
-    return sorted(p.name for p in DATA_DIR.iterdir() if p.is_file() and FILE_RE.match(p.name))
 
 
 # --------------------------------------------------------------------------- request handler
@@ -341,32 +411,16 @@ class Handler(SimpleHTTPRequestHandler):
                 delete_strategy(parts[1])
                 return self._send_json({"ok": True})
 
-        if route == "datasets" and method == "GET":
-            if len(parts) == 1:
-                return self._send_json({"files": list_datasets()})
-            if len(parts) == 2 and FILE_RE.match(parts[1]) and parts[1] in list_datasets():
-                body = (DATA_DIR / parts[1]).read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            raise ApiError("File not found in data/.", 404)
-
-        if route == "yahoo" and method == "GET":
-            symbol = (query.get("symbol") or "").strip().upper()
-            return self._send_json(
-                fetch_yahoo(symbol, query.get("interval", "1d"), query.get("range", "5y"), query.get("adjusted", "1") == "1")
-            )
-
-        if route == "binance" and method == "GET":
-            symbol = (query.get("symbol") or "").strip().upper()
-            try:
-                count = int(query.get("bars", "5000"))
-            except ValueError:
-                raise ApiError("bars must be a number.")
-            return self._send_json(fetch_binance(symbol, query.get("interval", "1h"), count))
+        if route == "traderdev":
+            sub = parts[1] if len(parts) > 1 else ""
+            if method == "GET" and sub == "status":
+                return self._send_json(traderdev_status())
+            if method == "POST" and sub == "call":
+                body = self._read_json()
+                name = body.get("tool")
+                if not isinstance(name, str):
+                    raise ApiError("Which Trader.dev call? Pass a tool name.")
+                return self._send_json(traderdev_call(name, body.get("args") or {}))
 
         raise ApiError("Not found", 404)
 
@@ -390,7 +444,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="VWAP Lab: run the backtester on localhost.")
+    ap = argparse.ArgumentParser(description="VWAP Lab: run the Trader.dev backtester on localhost.")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="port to listen on (default 8000)")
     ap.add_argument("--host", default="127.0.0.1", help="interface to bind (default 127.0.0.1, this computer only)")
     ap.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
@@ -398,7 +452,6 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     STRATEGY_DIR.mkdir(exist_ok=True)
-    DATA_DIR.mkdir(exist_ok=True)
 
     httpd = None
     port = args.port
@@ -420,9 +473,14 @@ def main(argv=None):
     url = f"http://{shown_host}:{port}/"
     print(f"\n  VWAP Lab is running at {url}")
     print(f"  Strategies: {STRATEGY_DIR}")
-    print(f"  CSV data:   {DATA_DIR}")
+    print(f"  Backtests:  {TRADERDEV_URL}")
+    if traderdev_key():
+        print("  Trader.dev API key: found")
+    else:
+        print("  Trader.dev API key: MISSING. Set TRADERDEV_API_KEY=pk_... and restart; backtests will fail until you do.")
     if httpd.allow_any_host:
-        print("  Warning: listening beyond this computer. Anyone who can reach this port can edit strategy files.")
+        print("  Warning: listening beyond this computer. Anyone who can reach this port can edit strategy")
+        print("           files and spend your Trader.dev credits.")
     print("  Press Ctrl+C to stop.\n")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

@@ -14,24 +14,22 @@ export default {
     trendLen: { value: 200, min: 20, max: 400, label: 'Trend EMA' },
   },
 
-  setup({ data, params, ta, plot }) {
-    const m = ta.macd(data.close, params.fast, params.slow, params.signal);
-    const trend = ta.ema(data.close, params.trendLen);
-    plot(`EMA ${params.trendLen}`, trend, { color: 'vwap', width: 2 });
-    plot('MACD', m.macd, { pane: 'lower', color: 'accent' });
-    plot('Signal', m.signal, { pane: 'lower', color: 'vwap' });
-    plot('Histogram', m.hist, { pane: 'lower', style: 'histogram' });
-    return { ...m, trend };
-  },
+  pine({ p }) {
+    return {
+      body: `
+[macdLine, signalLine, histLine] = ta.macd(close, ${p.fast}, ${p.slow}, ${p.signal})
+trendMa = ta.ema(close, ${p.trendLen})
+crossUp = ta.crossover(macdLine, signalLine)
+crossDown = ta.crossunder(macdLine, signalLine)`,
 
-  onBar(ctx) {
-    const { i, close, ind } = ctx;
-    const up = ctx.crossOver(ind.macd, ind.signal);
-    const down = ctx.crossUnder(ind.macd, ind.signal);
-    if (ctx.isLong && down) return ctx.exit('MACD cross down');
-    if (ctx.isShort && up) return ctx.exit('MACD cross up');
-    if (!ctx.isFlat) return;
-    if (up && close > ind.trend[i]) ctx.long({ label: 'MACD cross up' });
-    else if (down && close < ind.trend[i]) ctx.short({ label: 'MACD cross down' });
+      longEntry: 'crossUp and close > trendMa',
+      shortEntry: 'crossDown and close < trendMa',
+      longExit: 'crossDown',
+      shortExit: 'crossUp',
+
+      // Plots share the price chart, so the MACD lines are left off: they sit
+      // around zero and would flatten the candles into a line.
+      plots: [{ title: 'Trend EMA', expr: 'trendMa' }],
+    };
   },
 };

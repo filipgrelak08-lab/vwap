@@ -10,26 +10,27 @@ export default {
   params: {
     length: { value: 20, min: 5, max: 100, label: 'Length' },
     mult: { value: 2, min: 0.5, max: 4, step: 0.1, label: 'Width (σ)' },
-    trendFilter: { value: true, label: 'Only trade with the 100 EMA' },
+    trendFilter: { value: true, label: 'Only trade with the trend EMA' },
+    trendLen: { value: 100, min: 20, max: 400, label: 'Trend EMA length' },
   },
 
-  setup({ data, params, ta, plot }) {
-    const bb = ta.bollinger(data.close, params.length, params.mult);
-    const trend = ta.ema(data.close, 100);
-    plot('Upper', bb.upper, { color: 'band' });
-    plot('Middle', bb.middle, { color: 'accent' });
-    plot('Lower', bb.lower, { color: 'band' });
-    return { ...bb, trend };
-  },
+  pine({ p }) {
+    return {
+      body: `
+[bbMid, bbUpper, bbLower] = ta.bb(close, ${p.length}, ${p.mult})
+trendMa = ta.ema(close, ${p.trendLen})`,
 
-  onBar(ctx) {
-    const { i, close, ind, params: p } = ctx;
-    if (ctx.isLong && close < ind.middle[i]) return ctx.exit('Back below middle');
-    if (ctx.isShort && close > ind.middle[i]) return ctx.exit('Back above middle');
-    if (!ctx.isFlat) return;
-    const upOk = !p.trendFilter || close > ind.trend[i];
-    const downOk = !p.trendFilter || close < ind.trend[i];
-    if (close > ind.upper[i] && upOk) ctx.long({ label: 'Close above upper band' });
-    else if (close < ind.lower[i] && downOk) ctx.short({ label: 'Close below lower band' });
+      longEntry: `close > bbUpper and (not ${p.trendFilter} or close > trendMa)`,
+      shortEntry: `close < bbLower and (not ${p.trendFilter} or close < trendMa)`,
+      longExit: 'close < bbMid',
+      shortExit: 'close > bbMid',
+
+      plots: [
+        { title: 'Upper band', expr: 'bbUpper' },
+        { title: 'Middle band', expr: 'bbMid' },
+        { title: 'Lower band', expr: 'bbLower' },
+        { title: 'Trend EMA', expr: 'trendMa' },
+      ],
+    };
   },
 };

@@ -181,13 +181,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .panel h2 {
   margin: 0; font: 600 12px/1 var(--font-display); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-2);
 }
-.seg { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
-.seg button {
-  border: 0; background: transparent; padding: 6px 4px; border-radius: 6px; cursor: pointer; font-size: 12.5px; color: var(--ink-2);
-}
-.seg button[aria-selected="true"] { background: var(--surface); color: var(--ink); font-weight: 500; box-shadow: 0 0 0 1px var(--line), var(--shadow); }
-.seg button:hover:not([aria-selected="true"]) { color: var(--ink); }
-.source-pane { display: flex; flex-direction: column; gap: 10px; }
 
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field > span { font-size: 11.5px; color: var(--ink-2); }
@@ -206,7 +199,6 @@ input:disabled, select:disabled { opacity: 0.55; }
 .check.compact { font-size: 12px; }
 .hint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
 .hint.inline { font-size: 12px; }
-.notice { margin: 0; font-size: 12.5px; padding: 9px 10px; border-radius: 6px; background: var(--warn-bg); color: var(--ink-2); line-height: 1.45; }
 .desc { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
 .load-status { margin: 0; font-size: 12px; color: var(--ink-2); min-height: 0; }
 .load-status:empty { display: none; }
@@ -224,17 +216,7 @@ input:disabled, select:disabled { opacity: 0.55; }
 .fold-badge { font: 500 11px/1 var(--font-mono); color: var(--muted); padding: 3px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
 .fold-badge.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); }
 .fold-body { display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
-input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); min-width: 0; width: 100%; font: 12.5px var(--font-mono); }
 
-.dropzone {
-  position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 18px 12px;
-  border: 1.5px dashed var(--line); border-radius: 8px; background: var(--surface-2); cursor: pointer; text-align: center;
-}
-.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.dropzone strong { font-weight: 500; font-size: 13px; }
-.dropzone span { font-size: 12px; color: var(--muted); }
-.dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
-.server-csv { display: flex; flex-direction: column; gap: 8px; }
 
 /* params */
 .params { display: flex; flex-direction: column; gap: 12px; }
@@ -285,6 +267,13 @@ input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line)
 .error-box strong { color: var(--bad); font-size: 13px; }
 .error-box pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; color: var(--ink); }
 
+.notice-box {
+  border: 1px solid color-mix(in srgb, var(--vwap) 45%, transparent); background: var(--warn-bg); border-radius: var(--radius);
+  padding: 11px 14px; display: flex; flex-direction: column; gap: 5px;
+}
+.notice-box strong { font-size: 13px; color: var(--ink); }
+.notice-box ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+
 /* ---------- KPI tiles ---------- */
 .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; transition: opacity 0.15s; }
 .kpis.stale, .chart-card.stale { opacity: 0.55; }
@@ -316,8 +305,6 @@ input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line)
 /* charts */
 .chart-card { padding-bottom: 8px; transition: opacity 0.15s; }
 .chart-box { position: relative; width: 100%; }
-.chart-box.price { height: 400px; }
-.chart-box.osc { height: 130px; border-top: 1px solid var(--line); }
 .chart-box.equity { height: 230px; }
 .chart-box.dd { height: 120px; border-top: 1px solid var(--line); }
 .legend {
@@ -394,16 +381,10 @@ input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line)
 .opt-run { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .progress { flex: 1 1 160px; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.1s; }
-.opt-heat { display: grid; gap: 2px; font: 11px var(--font-mono); font-variant-numeric: tabular-nums; min-width: min-content; }
-.opt-heat .ax { color: var(--muted); padding: 4px; text-align: center; white-space: nowrap; display: flex; align-items: center; justify-content: center; }
-.opt-heat .ax.y { justify-content: flex-end; padding-right: 8px; }
-.opt-heat .corner { font: 500 10.5px var(--font-display); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; align-items: flex-end; justify-content: flex-end; padding: 4px 8px 4px 4px; text-align: right; }
-.opt-heat button {
-  border: 0; border-radius: 3px; min-width: 46px; height: 28px; cursor: pointer; font: inherit; padding: 0 4px;
-}
-.opt-heat button:hover { outline: 2px solid var(--ink); outline-offset: -1px; }
-.opt-heat button.current { outline: 2px solid var(--accent); outline-offset: -2px; }
-.opt-heat button.invalid { background: var(--surface-2); color: var(--muted); }
+/* A sweep is one call to Trader.dev, so there is no progress to measure: the
+   bar says work is happening, not how far along it is. */
+.progress.indeterminate i { width: 35%; animation: progress-slide 1.2s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(286%); } }
 
 /* code editor */
 .code-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
@@ -448,7 +429,6 @@ input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line)
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
   .run-dock { position: static; }
   .main { overflow: visible; padding: 16px; }
-  .chart-box.price { height: 340px; }
 }
 @media (max-width: 480px) {
   .brand-tag { display: none; }
@@ -458,4 +438,5 @@ input[type="time"] { height: 32px; padding: 0 9px; border: 1px solid var(--line)
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  .progress.indeterminate i { animation: none; width: 100%; opacity: 0.6; }
 }
