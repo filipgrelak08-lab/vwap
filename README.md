@@ -1,6 +1,6 @@
 # Backtesting Tool
 
-A backtester for trading strategies that runs every backtest on [Trader.dev](https://mcp-api.trader.dev). Run one Python file, open your browser, pick or write a strategy, and see how it would have traded: equity curve, drawdown, every trade, monthly returns, and a parameter sweep.
+A backtester for trading strategies that runs every backtest on [Trader.dev](https://trader.dev). Run one Python file, open your browser, pick or write a strategy, and see how it would have traded: equity curve, drawdown, every trade, monthly returns, and a parameter sweep.
 
 Strategies are small JavaScript files that describe their parameters and return the Pine Script for their signals. The app generates the finished script from the strategy plus whatever you have set in the sidebar, and sends it to Trader.dev on every run — so the code Trader.dev tests always matches what you changed in the app. The Pine sent tab shows exactly what went out.
 
@@ -22,9 +22,9 @@ Your browser opens at <http://localhost:8000>. On Windows use `py server.py`, an
 
 Options: `--port 9000`, `--no-browser`, `--verbose`.
 
-The key stays on your machine: the browser talks to this server, and this server talks to Trader.dev. Nothing writes the key to disk, so set it in your shell (or your shell profile) each session. The badge at the top right says whether Trader.dev answered; if it did not, the message says why.
+The key stays on your machine: the browser talks to this server, and only this server talks to Trader.dev, handing it the key once per connection. Nothing writes the key to disk, so set it in your shell (or your shell profile) each session. The badge at the top right says whether Trader.dev answered; if it did not, the message says why.
 
-If Trader.dev moves its API endpoint, point the server at the new one with `TRADERDEV_MCP_URL=https://.../mcp`.
+The server connects to Trader.dev's MCP server at `https://mcp.trader.dev/mcp`. If Trader.dev moves it, point the server at the new address with `TRADERDEV_MCP_URL=https://.../mcp`.
 
 Each backtest costs one Trader.dev credit, and a parameter sweep costs one per combination. The Run button shows your balance.
 
@@ -191,6 +191,6 @@ No test spends a credit: the Pine tests check the generated scripts, and the ser
 
 ## Credits
 
-Charts by [TradingView Lightweight Charts™](https://www.tradingview.com/) (Apache 2.0, see `web/vendor/`). Backtests by [Trader.dev](https://mcp-api.trader.dev). Market data from Bybit via Trader.dev; check their terms before using it for anything beyond personal research.
+Charts by [TradingView Lightweight Charts™](https://www.tradingview.com/) (Apache 2.0, see `web/vendor/`). Backtests by [Trader.dev](https://trader.dev). Market data from Bybit via Trader.dev; check their terms before using it for anything beyond personal research.
 
 This tool is for research and education. It is not financial advice.

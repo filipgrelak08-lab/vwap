@@ -36,9 +36,11 @@ STRATEGY_DIR = ROOT / "strategies"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_STRATEGY_BYTES = 512 * 1024
 
-# Trader.dev speaks MCP over HTTP. The endpoint is configurable because the
-# service may move it; TRADERDEV_MCP_URL overrides the default.
-TRADERDEV_URL = os.environ.get("TRADERDEV_MCP_URL", "https://mcp-api.trader.dev/mcp")
+# Trader.dev speaks MCP over HTTP at the address its sign-in page gives MCP
+# clients. (mcp-api.trader.dev is its website and REST API: it has no /mcp
+# route.) TRADERDEV_MCP_URL overrides the default if the service moves.
+DEFAULT_TRADERDEV_URL = "https://mcp.trader.dev/mcp"
+TRADERDEV_URL = (os.environ.get("TRADERDEV_MCP_URL") or "").strip() or DEFAULT_TRADERDEV_URL
 TRADERDEV_KEY_VARS = ("TRADERDEV_API_KEY", "TRADER_DEV_API_KEY")
 
 # Only these Trader.dev tools can be reached from the browser.
@@ -96,8 +98,8 @@ class TraderDev:
         h = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "Authorization": f"Bearer {self.key}",
             "MCP-Protocol-Version": PROTOCOL_VERSION,
+            # Trader.dev's firewall turns away Python's default user agent.
             "User-Agent": f"BacktestingTool/{VERSION}",
         }
         if self.session_id:
@@ -151,12 +153,8 @@ class TraderDev:
         self._next_id += 1
         payload = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
         status, ctype, raw = self._send(payload, timeout)
-        if status == 401 or status == 403:
-            raise ApiError(
-                "Trader.dev rejected the API key. Check TRADERDEV_API_KEY, then restart the server.", 401
-            )
-        if status == 404 and self.session_id:
-            raise ApiError("The Trader.dev session expired.", 409)
+        if status in (401, 403, 404) or status >= 500:
+            self._raise_for_http(status, raw)
         body = self._parse(status, ctype, raw)
         if status >= 400:
             msg = ""
@@ -171,22 +169,70 @@ class TraderDev:
             raise ApiError(f"Trader.dev: {msg}", 502)
         return body.get("result") or {}
 
+    def _raise_for_http(self, status, raw):
+        """Explain an HTTP failure in terms of what to do about it."""
+        if status == 404 and self.session_id:
+            raise ApiError("The Trader.dev session expired.", 409)
+        cloudflare = "cloudflare" in raw.lower()
+        if status == 404:
+            if self.url != DEFAULT_TRADERDEV_URL:
+                fix = f"Remove TRADERDEV_MCP_URL to use the default, {DEFAULT_TRADERDEV_URL}, or correct it."
+            else:
+                fix = "Trader.dev may have moved it; set TRADERDEV_MCP_URL to the new address."
+            raise ApiError(f"There is no Trader.dev MCP server at {self.url} (HTTP 404). {fix}", 502)
+        if status == 403 and cloudflare:
+            raise ApiError(
+                "Trader.dev's firewall turned this request away (HTTP 403). That is on Trader.dev's side, "
+                "not your key: try again later, and tell Trader.dev if it keeps happening.",
+                502,
+            )
+        if status in (401, 403):
+            raise ApiError(
+                "Trader.dev rejected the API key. Check TRADERDEV_API_KEY, then restart the server.", 401
+            )
+        raise ApiError(
+            f"Trader.dev's server is not answering properly right now (HTTP {status}). Try again in a minute.",
+            502,
+        )
+
     def _notify(self, method, params=None):
         payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         self._send(payload, 30)
 
     def _handshake(self):
         self.session_id = None
-        self._rpc(
-            "initialize",
-            {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "backtesting-tool", "version": VERSION},
-            },
-            30,
-        )
-        self._notify("notifications/initialized")
+        try:
+            self._rpc(
+                "initialize",
+                {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "backtesting-tool", "version": VERSION},
+                },
+                30,
+            )
+            self._notify("notifications/initialized")
+            self._authenticate()
+        except Exception:
+            self.session_id = None  # a half-open session must not be reused
+            raise
+
+    def _authenticate(self):
+        """Hand the API key to this session.
+
+        Trader.dev keeps the key per MCP session: it is given once through its
+        authenticate tool rather than sent as a header on every request.
+        """
+        result = self._rpc("tools/call", {"name": "authenticate", "arguments": {"key": self.key}}, 30)
+        if result.get("isError"):
+            detail = " ".join(
+                (b.get("text") or "") for b in result.get("content") or [] if isinstance(b, dict)
+            ).strip()
+            raise ApiError(
+                "Trader.dev did not accept the API key" + (f" ({detail[:300]})" if detail else "")
+                + ". Check TRADERDEV_API_KEY, then restart the server.",
+                401,
+            )
 
     # ---- tools
 
