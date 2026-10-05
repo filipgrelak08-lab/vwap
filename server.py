@@ -87,6 +87,19 @@ def shown_url(url):
     return urllib.parse.urlunsplit((p.scheme, p.netloc.rpartition("@")[2], p.path, "", ""))
 
 
+def with_key(url, key):
+    """The address Trader.dev's own setup gives MCP clients: .../mcp?key=pk_...
+
+    An address that already carries a key is left as it is.
+    """
+    p = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+    if not key or any(k == "key" for k, _ in query):
+        return url
+    query.append(("key", key))
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(query), p.fragment))
+
+
 # --------------------------------------------------------------------------- Trader.dev (MCP over HTTP)
 
 TOO_SLOW = (
@@ -117,13 +130,15 @@ class TraderDev:
 
     Not a general MCP implementation — just enough to call the handful of
     Trader.dev tools the app needs, with one session reused across requests.
-    Trader.dev keeps the API key per session, so each new session starts by
-    handing it over through the authenticate tool.
+    The API key goes in the address, as in Trader.dev's own setup command.
+    Should a session still say it is not logged in, the key is also handed
+    over through Trader.dev's authenticate tool.
     """
 
     def __init__(self, url, key):
         self.url = url
         self.key = key
+        self._post_url = with_key(url, key)
         self.session_id = None
         self._next_id = 0
         self._lock = threading.Lock()
@@ -144,7 +159,7 @@ class TraderDev:
 
     def _send(self, payload, timeout):
         body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(self.url, data=body, headers=self._headers(), method="POST")
+        req = urllib.request.Request(self._post_url, data=body, headers=self._headers(), method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 sid = resp.headers.get("Mcp-Session-Id")
@@ -278,13 +293,13 @@ class TraderDev:
                 "and include the details in brackets.",
                 502,
             )
-        if status in (401, 403):
-            # The key travels inside the session, never in a header, so a
-            # refusal at this level cannot be about the key.
+        if status == 401:
+            raise self._key_refused(f"HTTP {status}")
+        if status == 403:
             raise ApiError(
-                f"Trader.dev refused the connection (HTTP {status}) before your API key was sent, so the key is "
-                "not the problem. If you are on a school, work or VPN network, try another one; otherwise "
-                "Trader.dev may have changed how apps connect to it.",
+                f"Trader.dev refused the connection (HTTP {status}). Check that TRADERDEV_API_KEY is the pk_ key "
+                "Trader.dev gave you. If it is, try another network: school, work and VPN networks sometimes "
+                "block it.",
                 502,
             )
         if status in (504, 524):
@@ -311,7 +326,6 @@ class TraderDev:
                 30,
             )
             self._notify("notifications/initialized")
-            self._authenticate()
         except Exception:
             self.session_id = None  # a half-open session must not be reused
             raise
@@ -326,10 +340,9 @@ class TraderDev:
         )
 
     def _authenticate(self):
-        """Hand the API key to this session.
+        """Log this session in through Trader.dev's authenticate tool.
 
-        Trader.dev keeps the key per MCP session: it is given once through its
-        authenticate tool rather than sent as a header on every request.
+        Only needed when the key in the address did not do it.
         """
         try:
             result = self._rpc("tools/call", {"name": "authenticate", "arguments": {"key": self.key}}, 30)
@@ -377,16 +390,27 @@ class TraderDev:
 
     def _tool(self, name, args, timeout):
         result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
-        if isinstance(result, dict) and result.get("isError"):
-            said = " ".join(b.get("text") or "" for b in result.get("content") or [] if isinstance(b, dict))
-            if LOGGED_OUT_RE.search(said):
+        if self._logged_out(result):
+            # the key in the address was not enough: log this session in, once
+            self._authenticate()
+            result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
+            if self._logged_out(result):
                 raise ApiError(SESSION_LOST, 409)
         return result
+
+    @staticmethod
+    def _logged_out(result):
+        if not (isinstance(result, dict) and result.get("isError")):
+            return False
+        said = " ".join(b.get("text") or "" for b in result.get("content") or [] if isinstance(b, dict))
+        return bool(LOGGED_OUT_RE.search(said))
 
     def _redact(self, text):
         if self.key:
             text = text.replace(self.key, "pk_…")
-        return text.replace(self.url, shown_url(self.url)) if self.url != shown_url(self.url) else text
+        for url in (self._post_url, self.url):
+            text = text.replace(url, shown_url(url))
+        return text
 
     @staticmethod
     def _unwrap(name, result):

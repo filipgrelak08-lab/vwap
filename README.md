@@ -22,7 +22,7 @@ Your browser opens at <http://localhost:8000>. On Windows use `py server.py`, an
 
 Options: `--port 9000`, `--no-browser`, `--verbose`.
 
-The key never reaches the browser: the browser talks to this server, and only this server talks to Trader.dev, giving it the key at the start of each session. Nothing writes the key to disk, so set it in your shell (or your shell profile) each time you open a terminal. The badge at the top right says whether Trader.dev answered; if it did not, the message says why. Click the badge to check again after fixing something.
+The key never reaches the browser: the browser talks to this server, and only this server talks to Trader.dev, sending the key in the address the way Trader.dev's own setup does (`https://mcp.trader.dev/mcp?key=pk_...`). Nothing writes the key to disk, so set it in your shell (or your shell profile) each time you open a terminal. The badge at the top right says whether Trader.dev answered; if it did not, the message says why. Click the badge to check again after fixing something.
 
 The server connects to Trader.dev's MCP server at `https://mcp.trader.dev/mcp`. If Trader.dev moves it, point the server at the new address with `TRADERDEV_MCP_URL=https://.../mcp`.
 

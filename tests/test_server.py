@@ -5,6 +5,7 @@ need no API key and no network.
 """
 import http.client
 import json
+import urllib.parse
 import socket
 import sys
 import tempfile
@@ -23,8 +24,9 @@ import server  # noqa: E402
 class StubHandler(BaseHTTPRequestHandler):
     """Enough of MCP streamable HTTP to exercise server.TraderDev.
 
-    Like Trader.dev, it keeps the API key per session: tools refuse to run
-    until the session has called authenticate. Other paths stand in for the
+    Like Trader.dev, it takes the API key in the address (?key=pk_...); with
+    url_auth off it ignores that and wants the authenticate tool instead, as
+    a server that keeps the key per session would. Other paths stand in for the
     ways a connection fails: /cf is Cloudflare's firewall, /blocked a network
     filter, /busy a rate limit, /html a web page, /slow a gateway timeout and
     /cut a reply that stops half way. Anything else 404s like Trader.dev's
@@ -33,6 +35,8 @@ class StubHandler(BaseHTTPRequestHandler):
 
     calls = []
     auths = []
+    url_keys = []
+    url_auth = False
     headers_seen = []
     sse = False
     fail_sessions_once = False
@@ -49,19 +53,21 @@ class StubHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         cls = type(self)
         cls.headers_seen.append(dict(self.headers))
-        if self.path == "/cf":
+        path, _, query = self.path.partition("?")
+        url_key = dict(urllib.parse.parse_qsl(query)).get("key")
+        if path == "/cf":
             return self._raw(
                 403, b'{"title":"Error 1010: Access denied","detail":"blocked by cloudflare","error_code":1010,"ray_id":"8f2a1b3c4d5e6f70"}'
             )
-        if self.path == "/blocked":
+        if path == "/blocked":
             return self._raw(403, b"<html><body>This site is blocked by your network administrator.</body></html>", "text/html")
-        if self.path == "/busy":
+        if path == "/busy":
             return self._raw(429, b"<html><head><title>Rate limited | Cloudflare</title></head></html>", "text/html")
-        if self.path == "/html":
+        if path == "/html":
             return self._raw(200, b"<!DOCTYPE html><html><body>Welcome to Trader.dev</body></html>", "text/html")
-        if self.path == "/slow":
+        if path == "/slow":
             return self._raw(524, b"<html><body>A timeout occurred | Cloudflare</body></html>", "text/html")
-        if self.path == "/cut":
+        if path == "/cut":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", "500")
@@ -70,14 +76,19 @@ class StubHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.connection.shutdown(socket.SHUT_RDWR)
             return
-        if self.path != "/mcp":
-            return self._raw(404, b'{"message":"Route POST:' + self.path.encode() + b' not found","error":"Not Found","statusCode":404}')
+        if path != "/mcp":
+            return self._raw(404, b'{"message":"Route POST:' + path.encode() + b' not found","error":"Not Found","statusCode":404}')
+        if cls.url_auth and url_key == "pk_bad":
+            return self._raw(401, b'{"error":"Invalid API key"}')
         length = int(self.headers.get("Content-Length") or 0)
         req = json.loads(self.rfile.read(length) or b"{}")
         method = req.get("method")
         session = self.headers.get("Mcp-Session-Id")
         if method == "initialize":
             cls._sessions += 1
+            cls.url_keys.append(url_key)
+            if cls.url_auth and url_key:
+                cls._authed.add(f"stub-{cls._sessions}")
             return self._reply(req, {"protocolVersion": "2025-06-18", "capabilities": {}}, session=f"stub-{cls._sessions}")
         if method == "notifications/initialized":
             self.send_response(202)
@@ -175,6 +186,8 @@ class ServerTest(unittest.TestCase):
     def setUp(self):
         StubHandler.calls = []
         StubHandler.auths = []
+        StubHandler.url_keys = []
+        StubHandler.url_auth = False
         StubHandler.headers_seen = []
         StubHandler.sse = False
         StubHandler.fail_sessions_once = False
@@ -354,6 +367,30 @@ class ServerTest(unittest.TestCase):
         self.assertIn("firewall", body["error"])
         self.assertIn("not your key", body["error"])
 
+    def test_the_key_goes_in_the_address_like_trader_devs_setup(self):
+        self.use_key()
+        StubHandler.url_auth = True
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(StubHandler.url_keys, ["pk_test"])
+        self.assertEqual(StubHandler.auths, [], "no separate login was needed")
+
+    def test_a_key_refused_in_the_address_says_so(self):
+        self.use_key("pk_bad")
+        StubHandler.url_auth = True
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 401)
+        self.assertIn("could not log in with your API key", body["error"])
+
+    def test_the_key_in_the_address_is_never_shown(self):
+        self.use_key("pk_hiddenSECRET")
+        server.TRADERDEV_URL = self.stub_url.replace("/mcp", "/nowhere")
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertIn("/nowhere", body["error"])
+        self.assertNotIn("pk_hiddenSECRET", body["error"])
+        status, body = self.json("GET", "/api/traderdev/status")
+        self.assertNotIn("pk_hiddenSECRET", json.dumps(body))
+
     def test_the_default_address_is_the_mcp_host(self):
         self.assertEqual(server.DEFAULT_TRADERDEV_URL, "https://mcp.trader.dev/mcp")
 
@@ -396,7 +433,8 @@ class ServerTest(unittest.TestCase):
     def test_a_refusal_before_the_key_is_sent_does_not_blame_the_key(self):
         status, body = self.call_at("/blocked")
         self.assertEqual(status, 502)
-        self.assertIn("key is not the problem", body["error"])
+        self.assertIn("HTTP 403", body["error"])
+        self.assertIn("try another network", body["error"])
         self.assertNotIn("<html", body["error"])
 
     def test_a_firewall_block_carries_the_details_to_report(self):
@@ -496,6 +534,18 @@ class ServerTest(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- parsing helpers
+
+
+class AddressTest(unittest.TestCase):
+    def test_adds_the_key(self):
+        self.assertEqual(server.with_key("https://mcp.trader.dev/mcp", "pk_a-b_c"), "https://mcp.trader.dev/mcp?key=pk_a-b_c")
+
+    def test_keeps_a_key_already_there(self):
+        url = "https://mcp.trader.dev/mcp?key=pk_own"
+        self.assertEqual(server.with_key(url, "pk_other"), url)
+
+    def test_keeps_other_query_parts(self):
+        self.assertEqual(server.with_key("https://x.test/mcp?v=2", "pk_a"), "https://x.test/mcp?v=2&key=pk_a")
 
 
 class ParsingTest(unittest.TestCase):
