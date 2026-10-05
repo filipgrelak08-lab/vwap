@@ -1,4 +1,4 @@
-# VWAP Lab
+# Backtesting Tool
 
 A backtester for trading strategies that runs every backtest on [Trader.dev](https://mcp-api.trader.dev). Run one Python file, open your browser, pick or write a strategy, and see how it would have traded: equity curve, drawdown, every trade, monthly returns, and a parameter sweep.
 
@@ -146,7 +146,7 @@ Not available: `request.security` and other timeframes, arrays and maps, user-de
 
 Because strategies are written in Pine already, most of a TradingView strategy ports across unchanged. What moves:
 
-| In your Pine | In a VWAP Lab strategy |
+| In your Pine | In a strategy file here |
 |---|---|
 | `strategy(...)` header | Dropped — the app writes it |
 | `input.int(14, "Length")` | `params: { length: { value: 14, label: 'Length' } }`, then `${p.length}` in the body |

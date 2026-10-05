@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VWAP Lab: local server for the Trader.dev backtester.
+Backtesting Tool: local server for the Trader.dev backtester.
 
     export TRADERDEV_API_KEY=pk_...
     python3 server.py            # then open http://localhost:8000
@@ -98,7 +98,7 @@ class TraderDev:
             "Accept": "application/json, text/event-stream",
             "Authorization": f"Bearer {self.key}",
             "MCP-Protocol-Version": PROTOCOL_VERSION,
-            "User-Agent": f"VWAPLab/{VERSION}",
+            "User-Agent": f"BacktestingTool/{VERSION}",
         }
         if self.session_id:
             h["Mcp-Session-Id"] = self.session_id
@@ -182,7 +182,7 @@ class TraderDev:
             {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "vwap-lab", "version": VERSION},
+                "clientInfo": {"name": "backtesting-tool", "version": VERSION},
             },
             30,
         )
@@ -327,7 +327,7 @@ def delete_strategy(sid):
 
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = f"VWAPLab/{VERSION}"
+    server_version = f"BacktestingTool/{VERSION}"
     extensions_map = dict(SimpleHTTPRequestHandler.extensions_map, **{".js": "text/javascript", ".mjs": "text/javascript"})
 
     def __init__(self, *args, **kwargs):
@@ -444,7 +444,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="VWAP Lab: run the Trader.dev backtester on localhost.")
+    ap = argparse.ArgumentParser(description="Backtesting Tool: run the Trader.dev backtester on localhost.")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="port to listen on (default 8000)")
     ap.add_argument("--host", default="127.0.0.1", help="interface to bind (default 127.0.0.1, this computer only)")
     ap.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
@@ -471,7 +471,7 @@ def main(argv=None):
 
     shown_host = "localhost" if args.host in ("127.0.0.1", "0.0.0.0", "::", "::1") else args.host
     url = f"http://{shown_host}:{port}/"
-    print(f"\n  VWAP Lab is running at {url}")
+    print(f"\n  Backtesting Tool is running at {url}")
     print(f"  Strategies: {STRATEGY_DIR}")
     print(f"  Backtests:  {TRADERDEV_URL}")
     if traderdev_key():

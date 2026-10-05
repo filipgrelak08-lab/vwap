@@ -139,7 +139,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand-mark .bm-wick-down { stroke: var(--down); stroke-width: 1.5; }
 .brand-mark .bm-vwap { fill: none; stroke: var(--vwap); stroke-width: 2.4; stroke-linecap: round; }
 .brand-name { font: 600 19px/1 var(--font-display); letter-spacing: 0.01em; }
-.brand-tag { font: 500 10.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); padding-top: 3px; }
 .dataset-chip {
   display: flex; align-items: baseline; gap: 10px; min-width: 0;
   padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px;
@@ -431,7 +430,6 @@ input:disabled, select:disabled { opacity: 0.55; }
   .main { overflow: visible; padding: 16px; }
 }
 @media (max-width: 480px) {
-  .brand-tag { display: none; }
   .env-badge { font-size: 11px; }
   .field-row.three { grid-template-columns: 1fr 1fr; }
   .kpi-value { font-size: 22px; }

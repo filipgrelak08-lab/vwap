@@ -136,7 +136,7 @@ class ServerTest(unittest.TestCase):
     def test_serves_the_app(self):
         status, data = self.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"VWAP Lab", data)
+        self.assertIn(b"Backtesting Tool", data)
 
     def test_health(self):
         status, body = self.json("GET", "/api/health")

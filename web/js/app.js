@@ -12,6 +12,8 @@
   const BT = window.BT;
   const f = BT.fmt;
   const $ = (id) => document.getElementById(id);
+  // These keep the app's old name on purpose: renaming them would make the
+  // browser forget saved settings and any unsaved strategy edits.
   const STORE_KEY = 'vwaplab:v2';
   const DRAFT_KEY = 'vwaplab:drafts';
   const DEFAULT_STRATEGY = 'vwap_band_reversion';
@@ -478,7 +480,7 @@
         initialCapital: state.settings.capital,
         strategyId: state.remoteIds[rec.id],
         name: state.remoteIds[rec.id] ? undefined : compiled.name,
-        notes: `VWAP Lab · ${rec.id}`,
+        notes: `Backtesting Tool · ${rec.id}`,
       });
       const result = body.result;
       const resultId = result.id || body.resultId;
