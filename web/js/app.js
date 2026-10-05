@@ -122,9 +122,7 @@
     $('optRunBtn').disabled = $('runBtn').disabled;
   }
 
-  // quiet: leave the sidebar message alone, because the caller is already
-  // showing an error of its own
-  async function refreshStatus({ quiet = false } = {}) {
+  async function refreshStatus() {
     try {
       state.traderdev = await BT.traderdev.status();
     } catch (e) {
@@ -134,10 +132,10 @@
     const shown = $('loadStatus').textContent;
     if (!state.traderdev.ok) {
       const msg = state.traderdev.error || 'Trader.dev is not reachable.';
-      if (!quiet) {
-        setLoadStatus(`${msg} Then click the badge at the top right to check again.`, true);
-        state.envMessage = $('loadStatus').textContent;
-      }
+      // shown in the sidebar, not only in the badge's tooltip, so the reason
+      // stays on screen after the run's own error box is cleared
+      setLoadStatus(`${msg} Then click the badge at the top right to check again.`, true);
+      state.envMessage = $('loadStatus').textContent;
     } else if (state.envMessage && shown === state.envMessage) {
       setLoadStatus('');
     }
@@ -545,7 +543,7 @@
       showError(e);
       $('runStatus').textContent = 'Last run failed';
       // a dropped connection should show on the badge too, not only here
-      refreshStatus({ quiet: true });
+      refreshStatus();
     } finally {
       state.busy = false;
       renderEnv();
