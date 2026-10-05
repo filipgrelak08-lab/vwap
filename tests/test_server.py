@@ -5,6 +5,7 @@ need no API key and no network.
 """
 import http.client
 import json
+import socket
 import sys
 import tempfile
 import threading
@@ -23,8 +24,11 @@ class StubHandler(BaseHTTPRequestHandler):
     """Enough of MCP streamable HTTP to exercise server.TraderDev.
 
     Like Trader.dev, it keeps the API key per session: tools refuse to run
-    until the session has called authenticate. /cf answers like Cloudflare's
-    firewall, and any other path 404s like Trader.dev's website does.
+    until the session has called authenticate. Other paths stand in for the
+    ways a connection fails: /cf is Cloudflare's firewall, /blocked a network
+    filter, /busy a rate limit, /html a web page, /slow a gateway timeout and
+    /cut a reply that stops half way. Anything else 404s like Trader.dev's
+    website does.
     """
 
     calls = []
@@ -32,6 +36,9 @@ class StubHandler(BaseHTTPRequestHandler):
     headers_seen = []
     sse = False
     fail_sessions_once = False
+    stale_as_400 = False  # answer an expired session the TypeScript SDK way
+    always_expire = False
+    sse_noise = False  # send notifications around the response, as servers may
     _expired = False
     _sessions = 0
     _authed = set()
@@ -43,7 +50,26 @@ class StubHandler(BaseHTTPRequestHandler):
         cls = type(self)
         cls.headers_seen.append(dict(self.headers))
         if self.path == "/cf":
-            return self._raw(403, b'{"title":"Error 1010: Access denied","detail":"blocked by cloudflare"}')
+            return self._raw(
+                403, b'{"title":"Error 1010: Access denied","detail":"blocked by cloudflare","error_code":1010,"ray_id":"8f2a1b3c4d5e6f70"}'
+            )
+        if self.path == "/blocked":
+            return self._raw(403, b"<html><body>This site is blocked by your network administrator.</body></html>", "text/html")
+        if self.path == "/busy":
+            return self._raw(429, b"<html><head><title>Rate limited | Cloudflare</title></head></html>", "text/html")
+        if self.path == "/html":
+            return self._raw(200, b"<!DOCTYPE html><html><body>Welcome to Trader.dev</body></html>", "text/html")
+        if self.path == "/slow":
+            return self._raw(524, b"<html><body>A timeout occurred | Cloudflare</body></html>", "text/html")
+        if self.path == "/cut":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "500")
+            self.end_headers()
+            self.wfile.write(b'{"jsonrpc":')
+            self.wfile.flush()
+            self.connection.shutdown(socket.SHUT_RDWR)
+            return
         if self.path != "/mcp":
             return self._raw(404, b'{"message":"Route POST:' + self.path.encode() + b' not found","error":"Not Found","statusCode":404}')
         length = int(self.headers.get("Content-Length") or 0)
@@ -64,11 +90,21 @@ class StubHandler(BaseHTTPRequestHandler):
                 cls.auths.append(key)
                 if key == "pk_bad":
                     return self._reply(req, {"content": [{"type": "text", "text": "Invalid API key"}], "isError": True})
+                if key.startswith("pk_echo"):
+                    return self._reply(req, {"content": [{"type": "text", "text": f"Authentication failed for key {key}"}], "isError": True})
+                if key == "pk_rpcerr":
+                    body = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32602, "message": "Invalid arguments for tool authenticate"}}
+                    return self._raw(200, json.dumps(body).encode())
                 cls._authed.add(session)
                 return self._reply(req, {"content": [{"type": "text", "text": "Authenticated."}]})
             if session not in cls._authed:
                 return self._reply(req, {"content": [{"type": "text", "text": "Not authenticated."}], "isError": True})
             cls.calls.append((params.get("name"), params.get("arguments")))
+            if cls.always_expire:
+                return self._raw(404, b"")
+            if cls.stale_as_400 and not cls._expired:
+                cls._expired = True
+                return self._raw(400, b'{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: No valid session ID provided"},"id":null}')
             if cls.fail_sessions_once and not cls._expired:
                 type(self)._expired = True
                 self.send_response(404)
@@ -84,9 +120,9 @@ class StubHandler(BaseHTTPRequestHandler):
         self.send_response(400)
         self.end_headers()
 
-    def _raw(self, status, body):
+    def _raw(self, status, body, ctype="application/json"):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -95,6 +131,9 @@ class StubHandler(BaseHTTPRequestHandler):
         body = json.dumps({"jsonrpc": "2.0", "id": req.get("id"), "result": result}).encode()
         if type(self).sse:
             body = b"event: message\ndata: " + body + b"\n\n"
+            if type(self).sse_noise:
+                note = json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progress": 50}}).encode()
+                body = b"event: message\ndata: " + note + b"\n\n" + body + b": keep-alive\n\ndata: " + note + b"\n\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream" if type(self).sse else "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -139,6 +178,9 @@ class ServerTest(unittest.TestCase):
         StubHandler.headers_seen = []
         StubHandler.sse = False
         StubHandler.fail_sessions_once = False
+        StubHandler.stale_as_400 = False
+        StubHandler.always_expire = False
+        StubHandler.sse_noise = False
         StubHandler._expired = False
         StubHandler._authed = set()
         server._client = None
@@ -270,7 +312,7 @@ class ServerTest(unittest.TestCase):
         self.use_key("pk_bad")
         status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
         self.assertEqual(status, 401)
-        self.assertIn("did not accept the API key", body["error"])
+        self.assertIn("could not log in with your API key", body["error"])
         self.assertIn("Invalid API key", body["error"])
         self.assertEqual(StubHandler.calls, [], "nothing runs on a session the key did not open")
         status, body = self.json("GET", "/api/traderdev/status")
@@ -314,6 +356,117 @@ class ServerTest(unittest.TestCase):
 
     def test_the_default_address_is_the_mcp_host(self):
         self.assertEqual(server.DEFAULT_TRADERDEV_URL, "https://mcp.trader.dev/mcp")
+
+    def call_at(self, path, key="pk_test"):
+        self.use_key(key)
+        server.TRADERDEV_URL = self.stub_url.replace("/mcp", path)
+        return self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+
+    def test_reads_an_event_stream_with_notifications_around_the_answer(self):
+        self.use_key()
+        StubHandler.sse = True
+        StubHandler.sse_noise = True
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {"n": 1}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["result"]["args"], {"n": 1})
+
+    def test_reopens_a_session_expired_with_a_400(self):
+        self.use_key()
+        StubHandler.stale_as_400 = True
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(StubHandler.auths), 2, "a new session, with the key handed over again")
+
+    def test_logs_in_again_when_trader_dev_forgets_the_session_login(self):
+        self.use_key()
+        self.assertEqual(self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})[0], 200)
+        StubHandler._authed.clear()  # e.g. Trader.dev restarted but kept the session
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(StubHandler.auths), 2)
+
+    def test_a_session_that_keeps_expiring_is_explained(self):
+        self.use_key()
+        StubHandler.always_expire = True
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 502)
+        self.assertIn("keeps dropping", body["error"])
+        self.assertNotIn("session expired", body["error"].lower())
+
+    def test_a_refusal_before_the_key_is_sent_does_not_blame_the_key(self):
+        status, body = self.call_at("/blocked")
+        self.assertEqual(status, 502)
+        self.assertIn("key is not the problem", body["error"])
+        self.assertNotIn("<html", body["error"])
+
+    def test_a_firewall_block_carries_the_details_to_report(self):
+        status, body = self.call_at("/cf")
+        self.assertIn("Cloudflare error 1010", body["error"])
+        self.assertIn("Ray ID 8f2a1b3c4d5e6f70", body["error"])
+
+    def test_a_rate_limit_says_to_wait(self):
+        status, body = self.call_at("/busy")
+        self.assertEqual(status, 503)
+        self.assertIn("too many requests", body["error"])
+        self.assertNotIn("<html", body["error"])
+
+    def test_a_web_page_instead_of_mcp_points_at_the_address(self):
+        status, body = self.call_at("/html")
+        self.assertEqual(status, 502)
+        self.assertIn("answered with a web page", body["error"])
+        self.assertIn("TRADERDEV_MCP_URL", body["error"])
+        self.assertNotIn("<html", body["error"].lower())
+
+    def test_a_gateway_timeout_warns_about_credits(self):
+        status, body = self.call_at("/slow")
+        self.assertEqual(status, 504)
+        self.assertIn("may still have finished and used a credit", body["error"])
+
+    def test_a_reply_cut_off_part_way_is_explained(self):
+        status, body = self.call_at("/cut")
+        self.assertEqual(status, 502)
+        self.assertIn("dropped before it finished answering", body["error"])
+        status, body = self.json("GET", "/api/traderdev/status")
+        self.assertEqual(status, 200, "the status check must not crash on it")
+        self.assertFalse(body["ok"])
+
+    def test_the_key_is_never_echoed_back(self):
+        self.use_key("pk_echoSECRET123")
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 401)
+        self.assertNotIn("pk_echoSECRET123", body["error"])
+        status, body = self.json("GET", "/api/traderdev/status")
+        self.assertNotIn("pk_echoSECRET123", json.dumps(body))
+
+    def test_a_key_inside_the_address_is_never_shown(self):
+        self.use_key()
+        server.TRADERDEV_URL = self.stub_url + "?key=pk_inurlSECRET"
+        status, body = self.json("GET", "/api/traderdev/status")
+        self.assertNotIn("pk_inurlSECRET", json.dumps(body))
+        server.TRADERDEV_URL = self.stub_url.replace("/mcp", "/nowhere") + "?key=pk_inurlSECRET"
+        server._client = None
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertIn("/nowhere", body["error"])
+        self.assertNotIn("pk_inurlSECRET", body["error"])
+
+    def test_a_key_of_the_wrong_shape_is_caught_before_sending(self):
+        self.use_key("sk_live_wrongkind")
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 401)
+        self.assertIn("should start with pk_", body["error"])
+        self.assertEqual(StubHandler.headers_seen, [], "nothing was sent to Trader.dev")
+
+    def test_a_key_pasted_with_its_quotes_still_works(self):
+        self.use_key('"pk_quoted"')
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(StubHandler.auths, ["pk_quoted"])
+
+    def test_an_authenticate_protocol_error_reads_as_a_key_problem(self):
+        self.use_key("pk_rpcerr")
+        status, body = self.json("POST", "/api/traderdev/call", {"tool": "get_credits", "args": {}})
+        self.assertEqual(status, 401)
+        self.assertIn("could not log in with your API key", body["error"])
 
     def test_a_tool_error_comes_back_as_an_error(self):
         self.use_key()

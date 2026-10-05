@@ -11,7 +11,7 @@ Strategies are small JavaScript files that describe their parameters and return 
 
 ## Quick start
 
-You need a Trader.dev API key (it starts with `pk_`), Python 3.8+ and a current browser.
+You need a Trader.dev API key (it starts with `pk_`; get one by logging in at <https://mcp-api.trader.dev/login>), Python 3.8+ and a current browser.
 
 ```bash
 export TRADERDEV_API_KEY=pk_your_key_here
@@ -22,7 +22,7 @@ Your browser opens at <http://localhost:8000>. On Windows use `py server.py`, an
 
 Options: `--port 9000`, `--no-browser`, `--verbose`.
 
-The key stays on your machine: the browser talks to this server, and only this server talks to Trader.dev, handing it the key once per connection. Nothing writes the key to disk, so set it in your shell (or your shell profile) each session. The badge at the top right says whether Trader.dev answered; if it did not, the message says why.
+The key never reaches the browser: the browser talks to this server, and only this server talks to Trader.dev, giving it the key at the start of each session. Nothing writes the key to disk, so set it in your shell (or your shell profile) each time you open a terminal. The badge at the top right says whether Trader.dev answered; if it did not, the message says why. Click the badge to check again after fixing something.
 
 The server connects to Trader.dev's MCP server at `https://mcp.trader.dev/mcp`. If Trader.dev moves it, point the server at the new address with `TRADERDEV_MCP_URL=https://.../mcp`.
 

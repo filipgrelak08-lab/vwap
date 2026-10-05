@@ -99,37 +99,72 @@
     }
   }
 
+  const RECHECK = 'Click to check again.';
+
   function renderEnv() {
     const b = $('envBadge');
     const td = state.traderdev;
+    b.disabled = false;
     if (!state.server) {
       b.dataset.state = 'preview';
       b.textContent = 'No local server';
-      b.title = 'Backtests need the local server. Run python3 server.py and open http://localhost:8000.';
+      b.title = `Backtests need the local server. Run python3 server.py and open http://localhost:8000. ${RECHECK}`;
     } else if (td && td.ok) {
       b.dataset.state = 'server';
       b.textContent = `Trader.dev · ${td.email || 'connected'}`;
-      b.title = `Backtests run on ${td.url}${td.tier ? ` · ${td.tier} plan` : ''}`;
+      b.title = `Backtests run on ${td.url}${td.tier ? ` · ${td.tier} plan` : ''}. ${RECHECK}`;
     } else {
       b.dataset.state = 'preview';
       b.textContent = 'Trader.dev not connected';
-      b.title = (td && td.error) || 'Could not reach Trader.dev.';
+      b.title = `${(td && td.error) || 'Could not reach Trader.dev.'} ${RECHECK}`;
     }
     $('runBtn').disabled = !state.server || !(td && td.ok) || state.busy;
     $('optRunBtn').disabled = $('runBtn').disabled;
   }
 
-  async function refreshStatus() {
+  // quiet: leave the sidebar message alone, because the caller is already
+  // showing an error of its own
+  async function refreshStatus({ quiet = false } = {}) {
     try {
       state.traderdev = await BT.traderdev.status();
     } catch (e) {
       state.traderdev = { ok: false, configured: false, error: e.message };
     }
     renderEnv();
-    if (state.traderdev && !state.traderdev.ok) {
-      setLoadStatus(state.traderdev.error || 'Trader.dev is not reachable.', true);
+    const shown = $('loadStatus').textContent;
+    if (!state.traderdev.ok) {
+      const msg = state.traderdev.error || 'Trader.dev is not reachable.';
+      if (!quiet) {
+        setLoadStatus(`${msg} Then click the badge at the top right to check again.`, true);
+        state.envMessage = $('loadStatus').textContent;
+      }
+    } else if (state.envMessage && shown === state.envMessage) {
+      setLoadStatus('');
     }
     refreshCredits();
+  }
+
+  // The badge doubles as a "try again" button, so a key set or a network
+  // fixed after the page loaded does not need a reload.
+  async function recheckEnv() {
+    const b = $('envBadge');
+    if (b.disabled) return;
+    b.disabled = true;
+    b.dataset.state = 'checking';
+    b.textContent = 'Checking Trader.dev…';
+    const hadServer = state.server;
+    state.server = await detectServer();
+    if (!state.server) {
+      renderEnv();
+      setLoadStatus('Backtests need the local server. Run python3 server.py and open http://localhost:8000.', true);
+      return;
+    }
+    if (!hadServer) {
+      // the server came up after the page did: start over with its strategies
+      location.reload();
+      return;
+    }
+    await refreshStatus();
   }
 
   async function refreshCredits() {
@@ -509,6 +544,8 @@
       // the previous run stays on screen, dimmed, with the error above it
       showError(e);
       $('runStatus').textContent = 'Last run failed';
+      // a dropped connection should show on the badge too, not only here
+      refreshStatus({ quiet: true });
     } finally {
       state.busy = false;
       renderEnv();
@@ -1494,6 +1531,7 @@
     $('optRunBtn').addEventListener('click', runOptimizer);
 
     $('themeToggle').addEventListener('click', toggleTheme);
+    $('envBadge').addEventListener('click', recheckEnv);
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const onScheme = () => {
       BT.charts.retheme();

@@ -14,6 +14,7 @@ calls Trader.dev with the key from the environment.
 Standard library only. Python 3.8+.
 """
 import argparse
+import http.client
 import json
 import os
 import re
@@ -69,13 +70,46 @@ class ApiError(Exception):
 
 def traderdev_key():
     for var in TRADERDEV_KEY_VARS:
-        key = (os.environ.get(var) or "").strip()
+        # tolerate a key pasted with its quotes
+        key = (os.environ.get(var) or "").strip().strip("\"'").strip()
         if key:
             return key
     return ""
 
 
+def shown_url(url):
+    """The address minus anything that could carry a credential.
+
+    Trader.dev also offers personal connector URLs with the key inside them,
+    so whatever is shown or logged drops user:pass@, ?query and #fragment.
+    """
+    p = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((p.scheme, p.netloc.rpartition("@")[2], p.path, "", ""))
+
+
 # --------------------------------------------------------------------------- Trader.dev (MCP over HTTP)
+
+TOO_SLOW = (
+    "Trader.dev took too long to answer. A backtest may still have finished and used a credit, so check "
+    "your strategies on Trader.dev before running it again, or try a shorter date range or fewer combinations."
+)
+SESSION_LOST = "The Trader.dev session expired."
+SESSION_GONE_RE = re.compile(r"session.?id|session not found|unknown session|invalid session|session expired", re.I)
+# A session Trader.dev still knows but no longer counts as logged in, for
+# instance after it restarted: log in again rather than fail the run.
+LOGGED_OUT_RE = re.compile(r"not authenticated|authenticate first|not logged in|login required", re.I)
+
+
+def _cloudflare_ref(raw):
+    """', Cloudflare error 1010, Ray ID …' when the block page carries them."""
+    code = re.search(r'"error_code"\s*:\s*(\d+)|Error (\d{4})', raw)
+    ray = re.search(r'"ray_id"\s*:\s*"([0-9a-f]+)"|Ray ID:?\s*(?:<[^>]*>\s*)*([0-9a-f]{16})', raw, re.I)
+    out = ""
+    if code:
+        out += f", Cloudflare error {code.group(1) or code.group(2)}"
+    if ray:
+        out += f", Ray ID {ray.group(1) or ray.group(2)}"
+    return out
 
 
 class TraderDev:
@@ -83,6 +117,8 @@ class TraderDev:
 
     Not a general MCP implementation — just enough to call the handful of
     Trader.dev tools the app needs, with one session reused across requests.
+    Trader.dev keeps the API key per session, so each new session starts by
+    handing it over through the authenticate tool.
     """
 
     def __init__(self, url, key):
@@ -118,29 +154,65 @@ class TraderDev:
                 ctype = (resp.headers.get("Content-Type") or "").lower()
                 return resp.status, ctype, raw
         except urllib.error.HTTPError as e:
-            raw = e.read().decode("utf-8", "replace")
+            try:
+                raw = e.read().decode("utf-8", "replace")
+            except (http.client.HTTPException, OSError):
+                raw = ""
             return e.code, (e.headers.get("Content-Type") or "").lower(), raw
         except urllib.error.URLError as e:
             reason = str(getattr(e, "reason", e))
             if "CERTIFICATE_VERIFY_FAILED" in reason:
                 raise ApiError(
-                    "Python could not verify Trader.dev's SSL certificate. On macOS, run "
-                    "'Install Certificates.command' from your Python folder in Applications, then restart the server.",
+                    "Python could not verify Trader.dev's secure connection. On a Mac, run 'Install "
+                    "Certificates.command' from your Python folder in Applications. Anywhere else this usually "
+                    "means the network inspects secure traffic (common on school, work and public Wi-Fi) or the "
+                    "computer's clock is wrong: try another network or fix the clock, then restart the server.",
                     502,
                 )
-            raise ApiError(f"Could not reach Trader.dev at {self.url}: {reason}", 502)
-        except (TimeoutError, OSError) as e:
-            raise ApiError(f"Trader.dev did not answer in time: {e}", 504)
+            if isinstance(getattr(e, "reason", None), TimeoutError):
+                raise ApiError(TOO_SLOW, 504)
+            raise ApiError(
+                f"Could not reach Trader.dev. Check that this computer is online, then try again. ({reason})", 502
+            )
+        except (http.client.HTTPException, ConnectionError):
+            # a reply cut off part way, or a connection closed with no reply
+            raise ApiError(
+                "The connection to Trader.dev dropped before it finished answering. Wait a minute and try again.", 502
+            )
+        except (TimeoutError, OSError):
+            raise ApiError(TOO_SLOW, 504)
 
     @staticmethod
-    def _parse(status, ctype, raw):
-        """A JSON-RPC response, whether it arrived as JSON or as one SSE event."""
+    def _parse(status, ctype, raw, want_id=None):
+        """The JSON-RPC response, whether it came as JSON or in an event stream.
+
+        An event stream may carry the server's own notifications (progress,
+        log lines) around the response, so each event is read on its own and
+        the one answering this request is returned.
+        """
         if "text/event-stream" in ctype:
-            chunks = []
-            for line in raw.splitlines():
-                if line.startswith("data:"):
-                    chunks.append(line[5:].strip())
-            raw = "\n".join(chunks)
+            events, data = [], []
+            for line in raw.splitlines() + [""]:
+                if not line.strip():
+                    if data:
+                        events.append("\n".join(data))
+                        data = []
+                elif line.startswith("data:"):
+                    value = line[5:]
+                    data.append(value[1:] if value.startswith(" ") else value)
+            if not events:
+                return None
+            for event in events:
+                try:
+                    msg = json.loads(event)
+                except ValueError:
+                    continue
+                if not isinstance(msg, dict) or "method" in msg:
+                    continue  # a notification or request from the server, not our answer
+                if ("result" in msg or "error" in msg) and (want_id is None or msg.get("id") == want_id):
+                    return msg
+            snippet = events[-1].strip()[:200]
+            raise ApiError(f"Trader.dev sent a reply this app could not read (HTTP {status}): {snippet}", 502)
         if not raw.strip():
             return None
         try:
@@ -151,16 +223,25 @@ class TraderDev:
 
     def _rpc(self, method, params, timeout):
         self._next_id += 1
-        payload = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
+        rid = self._next_id
+        payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
         status, ctype, raw = self._send(payload, timeout)
-        if status in (401, 403, 404) or status >= 500:
+        if self.session_id and (status == 404 or (status == 400 and SESSION_GONE_RE.search(raw))):
+            raise ApiError(SESSION_LOST, 409)
+        if status in (401, 403, 404, 429) or status >= 500:
             self._raise_for_http(status, raw)
-        body = self._parse(status, ctype, raw)
+        if "text/html" in ctype:
+            raise ApiError(
+                f"{shown_url(self.url)} answered with a web page, not Trader.dev's MCP server (HTTP {status}). "
+                + self._address_fix(),
+                502,
+            )
+        body = self._parse(status, ctype, raw, rid)
         if status >= 400:
             msg = ""
             if isinstance(body, dict):
                 msg = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else body.get("message")
-            raise ApiError(msg or f"Trader.dev returned HTTP {status}.", 502)
+            raise ApiError(f"Trader.dev: {msg}" if msg else f"Trader.dev returned HTTP {status}.", 502)
         if not isinstance(body, dict):
             raise ApiError("Trader.dev sent an empty reply.", 502)
         if body.get("error"):
@@ -169,27 +250,45 @@ class TraderDev:
             raise ApiError(f"Trader.dev: {msg}", 502)
         return body.get("result") or {}
 
+    def _address_fix(self):
+        if self.url != DEFAULT_TRADERDEV_URL:
+            return (
+                f"Remove TRADERDEV_MCP_URL to use the default, {DEFAULT_TRADERDEV_URL}, or correct it, "
+                "then restart the server."
+            )
+        return (
+            "Trader.dev may have moved it: set TRADERDEV_MCP_URL to the address its sign-in page gives "
+            "MCP clients, then restart the server."
+        )
+
     def _raise_for_http(self, status, raw):
         """Explain an HTTP failure in terms of what to do about it."""
-        if status == 404 and self.session_id:
-            raise ApiError("The Trader.dev session expired.", 409)
-        cloudflare = "cloudflare" in raw.lower()
         if status == 404:
-            if self.url != DEFAULT_TRADERDEV_URL:
-                fix = f"Remove TRADERDEV_MCP_URL to use the default, {DEFAULT_TRADERDEV_URL}, or correct it."
-            else:
-                fix = "Trader.dev may have moved it; set TRADERDEV_MCP_URL to the new address."
-            raise ApiError(f"There is no Trader.dev MCP server at {self.url} (HTTP 404). {fix}", 502)
-        if status == 403 and cloudflare:
             raise ApiError(
-                "Trader.dev's firewall turned this request away (HTTP 403). That is on Trader.dev's side, "
-                "not your key: try again later, and tell Trader.dev if it keeps happening.",
+                f"There is no Trader.dev MCP server at {shown_url(self.url)} (HTTP 404). {self._address_fix()}", 502
+            )
+        if status == 429:
+            raise ApiError(
+                "Trader.dev is getting too many requests right now (HTTP 429). Wait a minute, then try again.", 503
+            )
+        if status == 403 and "cloudflare" in raw.lower():
+            raise ApiError(
+                f"Trader.dev's firewall turned this request away (HTTP 403{_cloudflare_ref(raw)}). That is not "
+                "your key. If you use a VPN, turn it off and try again; if it keeps happening, tell Trader.dev "
+                "and include the details in brackets.",
                 502,
             )
         if status in (401, 403):
+            # The key travels inside the session, never in a header, so a
+            # refusal at this level cannot be about the key.
             raise ApiError(
-                "Trader.dev rejected the API key. Check TRADERDEV_API_KEY, then restart the server.", 401
+                f"Trader.dev refused the connection (HTTP {status}) before your API key was sent, so the key is "
+                "not the problem. If you are on a school, work or VPN network, try another one; otherwise "
+                "Trader.dev may have changed how apps connect to it.",
+                502,
             )
+        if status in (504, 524):
+            raise ApiError(f"{TOO_SLOW} (HTTP {status})", 504)
         raise ApiError(
             f"Trader.dev's server is not answering properly right now (HTTP {status}). Try again in a minute.",
             502,
@@ -217,37 +316,77 @@ class TraderDev:
             self.session_id = None  # a half-open session must not be reused
             raise
 
+    @staticmethod
+    def _key_refused(detail):
+        return ApiError(
+            "Trader.dev could not log in with your API key" + (f" ({detail[:300]})" if detail else "") + ". "
+            "If it is the pk_ key Trader.dev gave you, Trader.dev may be having trouble: try again in a minute. "
+            "Otherwise set TRADERDEV_API_KEY to the right key and restart the server.",
+            401,
+        )
+
     def _authenticate(self):
         """Hand the API key to this session.
 
         Trader.dev keeps the key per MCP session: it is given once through its
         authenticate tool rather than sent as a header on every request.
         """
-        result = self._rpc("tools/call", {"name": "authenticate", "arguments": {"key": self.key}}, 30)
+        try:
+            result = self._rpc("tools/call", {"name": "authenticate", "arguments": {"key": self.key}}, 30)
+        except ApiError as e:
+            if e.status == 502 and str(e).startswith("Trader.dev: "):  # Trader.dev answered with an error
+                raise self._key_refused(str(e)[len("Trader.dev: "):]) from None
+            raise
         if result.get("isError"):
             detail = " ".join(
                 (b.get("text") or "") for b in result.get("content") or [] if isinstance(b, dict)
             ).strip()
-            raise ApiError(
-                "Trader.dev did not accept the API key" + (f" ({detail[:300]})" if detail else "")
-                + ". Check TRADERDEV_API_KEY, then restart the server.",
-                401,
-            )
+            raise self._key_refused(detail)
 
     # ---- tools
 
     def call_tool(self, name, args, timeout):
-        with self._lock:
+        try:
+            with self._lock:
+                result = self._call(name, args, timeout)
+            return self._unwrap(name, result)
+        except ApiError as e:
+            # Nothing Trader.dev says back should carry the key to the screen.
+            raise ApiError(self._redact(str(e)), e.status) from None
+
+    def _call(self, name, args, timeout):
+        try:
             if not self.session_id:
                 self._handshake()
             try:
-                result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
+                return self._tool(name, args, timeout)
             except ApiError as e:
                 if e.status != 409:
                     raise
                 self._handshake()  # session expired mid-run: open a new one and retry once
-                result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
-        return self._unwrap(name, result)
+                return self._tool(name, args, timeout)
+        except ApiError as e:
+            if e.status != 409:
+                raise
+            self.session_id = None
+            raise ApiError(
+                "Trader.dev keeps dropping this app's connection. Wait a minute and try again; "
+                "if it keeps happening, tell Trader.dev.",
+                502,
+            ) from None
+
+    def _tool(self, name, args, timeout):
+        result = self._rpc("tools/call", {"name": name, "arguments": args}, timeout)
+        if isinstance(result, dict) and result.get("isError"):
+            said = " ".join(b.get("text") or "" for b in result.get("content") or [] if isinstance(b, dict))
+            if LOGGED_OUT_RE.search(said):
+                raise ApiError(SESSION_LOST, 409)
+        return result
+
+    def _redact(self, text):
+        if self.key:
+            text = text.replace(self.key, "pk_…")
+        return text.replace(self.url, shown_url(self.url)) if self.url != shown_url(self.url) else text
 
     @staticmethod
     def _unwrap(name, result):
@@ -283,6 +422,11 @@ class TraderDev:
 _client = None
 _client_lock = threading.Lock()
 
+BAD_KEY_SHAPE = (
+    "TRADERDEV_API_KEY does not look like a Trader.dev key: it should start with pk_. "
+    "Copy it again from Trader.dev, set it, and restart the server."
+)
+
 
 def traderdev_client():
     global _client
@@ -291,6 +435,8 @@ def traderdev_client():
         raise ApiError(
             "No Trader.dev API key. Set TRADERDEV_API_KEY to your pk_... key and restart the server.", 503
         )
+    if not key.startswith("pk_"):
+        raise ApiError(BAD_KEY_SHAPE, 401)
     with _client_lock:
         if _client is None or _client.key != key or _client.url != TRADERDEV_URL:
             _client = TraderDev(TRADERDEV_URL, key)
@@ -307,11 +453,12 @@ def traderdev_call(name, args):
 
 def traderdev_status():
     """Whether the app can reach Trader.dev, without spending a credit."""
+    url = shown_url(TRADERDEV_URL)
     if not traderdev_key():
         return {
             "ok": False,
             "configured": False,
-            "url": TRADERDEV_URL,
+            "url": url,
             "error": "No Trader.dev API key. Set TRADERDEV_API_KEY to your pk_... key and restart the server.",
         }
     try:
@@ -321,12 +468,12 @@ def traderdev_status():
         return {
             "ok": True,
             "configured": True,
-            "url": TRADERDEV_URL,
+            "url": url,
             "email": user.get("email"),
             "tier": user.get("displayTier") or user.get("tier"),
         }
     except ApiError as e:
-        return {"ok": False, "configured": True, "url": TRADERDEV_URL, "error": str(e)}
+        return {"ok": False, "configured": True, "url": url, "error": str(e)}
 
 
 # --------------------------------------------------------------------------- strategies
@@ -519,9 +666,11 @@ def main(argv=None):
     url = f"http://{shown_host}:{port}/"
     print(f"\n  Backtesting Tool is running at {url}")
     print(f"  Strategies: {STRATEGY_DIR}")
-    print(f"  Backtests:  {TRADERDEV_URL}")
-    if traderdev_key():
+    print(f"  Backtests:  {shown_url(TRADERDEV_URL)}")
+    if traderdev_key().startswith("pk_"):
         print("  Trader.dev API key: found")
+    elif traderdev_key():
+        print("  Trader.dev API key: found, but it does not start with pk_. Copy it again from Trader.dev.")
     else:
         print("  Trader.dev API key: MISSING. Set TRADERDEV_API_KEY=pk_... and restart; backtests will fail until you do.")
     if httpd.allow_any_host:
