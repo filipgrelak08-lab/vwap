@@ -7,7 +7,7 @@ Strategies are small JavaScript files that describe their parameters and return 
 - **Backtests run on Trader.dev.** Nothing is simulated locally, so the numbers are the ones Trader.dev's TradingView-parity engine produces.
 - **Your edits go with every run.** Change a parameter or a stop, press Run, and the regenerated Pine carries it.
 - **Runs are versioned.** The first run of a strategy creates it on Trader.dev; later runs add versions to the same strategy, so its report shows the history.
-- **Eight example strategies**: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
+- **Nine example strategies**: VWAP band reversion, VWAP trend pullback, opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout, MACD trend and Larry Williams volatility breakout.
 
 ## Quick start
 
