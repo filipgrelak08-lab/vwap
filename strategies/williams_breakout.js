@@ -6,6 +6,9 @@
 // no trade is held overnight unless you ask for a longer hold. At most one
 // trade a day. Meant for intraday charts (1h, 2h, 4h).
 //
+// Optional chop filter: skip days when the last N days' efficiency ratio
+// (net move / total day-to-day movement) is below a minimum.
+//
 // Optional short side: sell short the first close below today's open minus
 // k times the range. Off by default; the tested version is long only.
 //
@@ -23,6 +26,9 @@ export default {
     useTrend: { value: false, label: 'Trend filter: trade with yesterday\'s close vs its daily average' },
     trendDays: { value: 20, min: 5, max: 100, label: 'Daily average length (days)' },
     shorts: { value: false, label: 'Also short breakdowns below the open' },
+    useChop: { value: false, label: 'Chop filter: skip choppy markets' },
+    chopDays: { value: 10, min: 2, max: 50, label: 'Chop filter lookback (days)' },
+    minEr: { value: 0.2, min: 0, max: 1, step: 0.05, label: 'Chop filter: min trend strength (0-1)' },
   },
 
   pine({ p }) {
@@ -50,12 +56,15 @@ var int entryDay = -1
 var float pdc = na
 var float cumC = 0.0
 var float cumR = 0.0
+var float cumAbs = 0.0
 
 if newDay
     // yesterday's range counts only if it was a full day from its 00:00 candle
     pRange := bar_index > 0 and curFromMidnight and dayId == curDay + 1 ? dHi - dLo : 0.0
     cumR := cumR + pRange
     if bar_index > 0
+        if not na(pdc)
+            cumAbs := cumAbs + math.abs(close[1] - pdc)
         pdc := close[1]
         cumC := cumC + close[1]
     dOpen := open
@@ -78,7 +87,15 @@ dailyMa = na(cumBack) ? na : (cumC - cumBack) / ${p.trendDays}
 trendUp = not ${p.useTrend} or (not na(dailyMa) and pdc > dailyMa)
 trendDown = not ${p.useTrend} or (not na(dailyMa) and pdc < dailyMa)
 
-ready = not traded and not lastBar and strategy.position_size == 0 and pRange > 0 and avgRange > 0
+// efficiency ratio of the last chopDays daily closes: net move / total
+// day-to-day movement, 1 = straight line, near 0 = chop
+cumAbsBack = ta.valuewhen(newDay, cumAbs, ${p.chopDays})
+pdcBack = ta.valuewhen(newDay, pdc, ${p.chopDays})
+pathLen = na(cumAbsBack) ? na : cumAbs - cumAbsBack
+effRatio = na(pathLen) or na(pdcBack) or pathLen <= 0 ? na : math.abs(pdc - pdcBack) / pathLen
+chopOk = not ${p.useChop} or (not na(effRatio) and effRatio >= ${p.minEr})
+
+ready = not traded and not lastBar and strategy.position_size == 0 and pRange > 0 and avgRange > 0 and chopOk
 upTrigger = dOpen + ${p.k} * avgRange
 downTrigger = dOpen - ${p.k} * avgRange
 rawLong = ready and close > upTrigger and trendUp
