@@ -195,3 +195,11 @@ test('the new-strategy template generates valid Pine', () => {
   assert.match(src, /ta\.ema\(close, p_fast\)/);
   assert.match(src, /strategy\.entry\("L", strategy\.long\)/);
 });
+
+test('a strategy can trade a smaller share of equity', () => {
+  const code = strategyFiles().find((s) => s.id === 'rally_fade_short').code;
+  const src = build(code);
+  assert.match(src, /strategy\.entry\("S", strategy\.short, qty=strategy\.equity \* \(\(p_sizePct\)\) \/ 100 \/ close\)/);
+  // without a size the entry keeps the default 100% of equity
+  assert.match(build(MA_CROSS), /strategy\.entry\("L", strategy\.long\)\n/);
+});

@@ -15,6 +15,7 @@
  *       shortEntry: 'ta.crossunder(fastMa, slowMa)',
  *       longExit: 'ta.crossunder(fastMa, slowMa)',   // optional
  *       longStop: 'fastMa',                          // optional, overrides the sidebar stop
+ *       shortSizePct: '50',                          // optional, % of equity per short
  *     };
  *   }
  *
@@ -26,7 +27,9 @@
  *
  * Trader.dev fixes commission at 0.05% per side, position size at 100% of
  * equity and fills on the signal bar's close, so the app has no controls
- * for those.
+ * for those. A strategy can still trade a smaller share of equity with
+ * longSizePct / shortSizePct; that matters for shorts, because the tester
+ * partly closes a 100% short on any candle that moves against it.
  */
 (function (root) {
   'use strict';
@@ -217,7 +220,9 @@
       if (trail) vars.push(`var float ${tag}Peak = na`);
       if (beR) vars.push(`var float ${tag}Risk = na`);
 
-      const onEntry = [`strategy.entry(${str(id)}, strategy.${long ? 'long' : 'short'})`];
+      const sizePct = long ? sig.longSizePct : sig.shortSizePct;
+      const qty = sizePct ? `, qty=strategy.equity * (${expr(sizePct)}) / 100 / close` : '';
+      const onEntry = [`strategy.entry(${str(id)}, strategy.${long ? 'long' : 'short'}${qty})`];
       if (beR) onEntry.push(`${tag}Entry := close`);
       if (bars) onEntry.push(`${tag}Bar := bar_index`);
       if (movesStop) onEntry.push(`${tag}Stop := ${stop || 'na'}`);

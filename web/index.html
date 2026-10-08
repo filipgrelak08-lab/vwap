@@ -348,6 +348,7 @@
               <li><code>longEntry</code>, <code>shortEntry</code> — Pine expressions that are true when a trade opens. At least one is required.</li>
               <li><code>longExit</code>, <code>shortExit</code> — true when the position closes on a signal.</li>
               <li><code>longStop</code>, <code>shortStop</code>, <code>longTarget</code>, <code>shortTarget</code> — price levels read at entry. They win over the sidebar's stop and target; return <code>na</code> to fall back to it.</li>
+              <li><code>longSizePct</code>, <code>shortSizePct</code> — share of equity per trade (default 100). Use less than 100 for shorts: the tester partly closes a full-size short on any candle that moves against it.</li>
               <li><code>plots</code> — <code>[{ title, expr }]</code>, drawn on the Trader.dev report.</li>
             </ul>
             <h4>What the app adds</h4>
