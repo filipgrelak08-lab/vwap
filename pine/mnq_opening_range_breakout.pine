@@ -1,0 +1,122 @@
+//@version=6
+strategy("MNQ opening range breakout (5m)", shorttitle="MNQ ORB", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Opening range breakout on a 5-minute MNQ chart. The range is the high and low of 9:30-9:45 New
+// York time. Between 9:45 and 11:30, go long on a candle that closes above the range high, short on
+// one that closes below the range low (optionally only with the 200 EMA). Stop beyond the other side
+// of the range, or an ATR stop; target 2R. At most two trades a day, one at a time, and any open
+// trade is closed at 15:55 so nothing is held overnight.
+//
+// Fills happen at the close of the signal candle. margin_long/short = 0 turns off TradingView's
+// margin-call simulation, which doesn't fit futures margin; commission is per contract per side.
+//
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+
+// --- inputs
+gR = "Opening range and times (New York)"
+orSess = input.session("0930-0945", "Opening range", group=gR)
+winSess = input.session("0945-1130", "Take entries between", group=gR)
+flatAt = input.int(1555, "Close any open trade at (HHMM)", minval=0, maxval=2359, group=gR)
+maxTrades = input.int(2, "Max trades per day", minval=1, group=gR)
+
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+useTrend = input.bool(false, "Trend filter: longs only above the EMA, shorts only below", group=gE)
+emaLen = input.int(200, "EMA length", minval=2, group=gE)
+
+gX = "Stop, target and size"
+stopMode = input.string("Opening range", "Stop", options=["Opening range", "ATR", "Tighter of the two"], group=gX, tooltip="Opening range: below the range low for longs, above the range high for shorts. ATR: entry ± ATR × multiple.")
+bufTicks = input.int(2, "Opening-range stop buffer (ticks)", minval=0, group=gX)
+atrLen = input.int(14, "ATR length", minval=1, group=gX)
+atrMult = input.float(1.0, "ATR stop (× ATR)", minval=0.1, step=0.1, group=gX)
+rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX)
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+if timeframe.in_seconds() > 900
+    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+
+// --- opening range, rebuilt every New York day
+inOR = not na(time(timeframe.period, orSess, tz))
+inWin = not na(time(timeframe.period, winSess, tz))
+nyDay = dayofmonth(time, tz)
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+
+var float orH = na
+var float orL = na
+var bool orReady = false
+var int tradesToday = 0
+
+if bar_index == 0 or nyDay != nyDay[1]
+    orH := na
+    orL := na
+    orReady := false
+    tradesToday := 0
+
+if inOR
+    orH := na(orH) ? high : math.max(orH, high)
+    orL := na(orL) ? low : math.min(orL, low)
+else if not na(orH) and not orReady
+    orReady := true
+
+// --- signals
+ema = ta.ema(close, emaLen)
+atr = ta.atr(atrLen)
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+
+canTrade = orReady and inWin and isFlat and tradesToday < maxTrades and closeHHMM < flatAt
+// a close that crosses the range: after a trade, price has to come back inside before the next one
+longSig = canTrade and useLong and close > orH and close[1] <= orH and (not useTrend or close > ema)
+shortSig = canTrade and useShort and close < orL and close[1] >= orL and (not useTrend or close < ema)
+
+orStopL = orL - bufTicks * syminfo.mintick
+orStopS = orH + bufTicks * syminfo.mintick
+atrStopL = close - atrMult * atr
+atrStopS = close + atrMult * atr
+stopL = stopMode == "Opening range" ? orStopL : stopMode == "ATR" ? atrStopL : math.max(orStopL, atrStopL)
+stopS = stopMode == "Opening range" ? orStopS : stopMode == "ATR" ? atrStopS : math.min(orStopS, atrStopS)
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := math.round_to_mintick(stopL)
+    tpPx := math.round_to_mintick(close + rr * (close - slPx))
+    tradesToday += 1
+    risk = (close - slPx) * syminfo.pointvalue * contracts
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message="🟢 LONG " + syminfo.ticker + " (ORB " + timeframe.period + "m)\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rr) + "R)\nRisk: " + usd(risk) + " on " + str.tostring(contracts) + " contract(s)\nTrade " + str.tostring(tradesToday) + " of " + str.tostring(maxTrades) + " today")
+else if shortSig
+    slPx := math.round_to_mintick(stopS)
+    tpPx := math.round_to_mintick(close - rr * (slPx - close))
+    tradesToday += 1
+    risk = (slPx - close) * syminfo.pointvalue * contracts
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message="🔻 SHORT " + syminfo.ticker + " (ORB " + timeframe.period + "m)\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rr) + "R)\nRisk: " + usd(risk) + " on " + str.tostring(contracts) + " contract(s)\nTrade " + str.tostring(tradesToday) + " of " + str.tostring(maxTrades) + " today")
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots
+showOR = orReady and hour(time, tz) < 16
+plot(showOR ? orH : na, "Range high", color=color.teal, linewidth=2, style=plot.style_linebr)
+plot(showOR ? orL : na, "Range low", color=color.maroon, linewidth=2, style=plot.style_linebr)
+bgcolor(inOR ? color.new(color.gray, 85) : na, title="Opening range forming")
+bgcolor(inWin and orReady ? color.new(color.blue, 95) : na, title="Entry window")
+plot(useTrend ? ema : na, "EMA", color=color.orange)
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

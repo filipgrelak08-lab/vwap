@@ -1,0 +1,142 @@
+//@version=6
+strategy("EMA trend pullback", shorttitle="EMA pullback", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Trade with an established trend after a pullback to the 20 EMA.
+// Bull trend: close above the 200 EMA and 20 > 50 > 200. Bear trend: mirrored.
+// Long: in a bull trend, price touches or dips below the 20 EMA, then within a few candles a candle
+// closes back above it with bullish confirmation. Short: mirrored.
+// Stop below the pullback's lowest low (above its highest high for shorts), or an ATR stop. Target
+// in R (test 1.5 and 2). Signals are skipped when the averages are tangled or ADX shows no trend.
+//
+// Defaults are for a 5-minute MNQ chart: fixed contracts, commission per contract per side, entries
+// 9:30-15:30 New York and any open trade closed at 15:55. margin = 0 turns off TradingView's
+// margin-call simulation, which doesn't fit futures margin.
+//
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+
+// --- inputs
+gT = "Trend"
+fastLen = input.int(20, "Fast EMA", minval=2, group=gT)
+midLen = input.int(50, "Middle EMA", minval=2, group=gT)
+slowLen = input.int(200, "Slow EMA", minval=2, group=gT)
+minGapAtr = input.float(0.3, "Min gap between fast and middle EMA (× ATR, 0 = off)", minval=0.0, step=0.05, group=gT, tooltip="Skips signals while the averages are tangled.")
+useAdx = input.bool(true, "Skip sideways markets (ADX filter)", group=gT)
+adxMin = input.float(20.0, "Minimum ADX", minval=0.0, group=gT)
+
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+confirmMode = input.string("Bullish/bearish candle", "Confirmation", options=["Bullish/bearish candle", "Close beyond the previous candle"], group=gE, tooltip="Long: the candle closes above its open, or above the previous candle's high. Short: mirrored.")
+maxPbBars = input.int(5, "Signal must come within (candles of the last touch)", minval=0, group=gE)
+
+gX = "Stop, target and size"
+stopMode = input.string("Pullback swing", "Stop", options=["Pullback swing", "ATR"], group=gX)
+bufTicks = input.int(2, "Swing stop buffer (ticks)", minval=0, group=gX)
+atrLen = input.int(14, "ATR length", minval=1, group=gX)
+atrMult = input.float(1.5, "ATR stop (× ATR)", minval=0.1, step=0.1, group=gX)
+rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX, tooltip="Test 1.5 and 2.")
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+useWindow = input.bool(true, "Only enter between", inline="w", group=gS)
+winSess = input.session("0930-1530", "", inline="w", group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+maxTrades = input.int(0, "Max trades per day (0 = no limit)", minval=0, group=gS)
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+
+// --- indicators
+eF = ta.ema(close, fastLen)
+eM = ta.ema(close, midLen)
+eS = ta.ema(close, slowLen)
+atr = ta.atr(atrLen)
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+
+trending = not useAdx or adx >= adxMin
+bullStack = eF > eM and eM > eS
+bearStack = eF < eM and eM < eS
+bull = bullStack and close > eS and eF - eM >= minGapAtr * atr and trending
+bear = bearStack and close < eS and eM - eF >= minGapAtr * atr and trending
+
+// --- pullback tracking: a touch of the fast EMA opens a setup, which records the pullback's
+// extreme and expires maxPbBars candles after the last touch or when the EMA stack breaks
+var int touchL = na
+var float pbLow = na
+if bullStack and low <= eF
+    pbLow := na(touchL) ? low : pbLow
+    touchL := bar_index
+if not na(touchL)
+    pbLow := math.min(pbLow, low)
+if not bullStack or (not na(touchL) and bar_index - touchL > maxPbBars)
+    touchL := na
+    pbLow := na
+
+var int touchS = na
+var float pbHigh = na
+if bearStack and high >= eF
+    pbHigh := na(touchS) ? high : pbHigh
+    touchS := bar_index
+if not na(touchS)
+    pbHigh := math.max(pbHigh, high)
+if not bearStack or (not na(touchS) and bar_index - touchS > maxPbBars)
+    touchS := na
+    pbHigh := na
+
+// --- day state
+nyDay = dayofmonth(time, tz)
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+inWin = not na(time(timeframe.period, winSess, tz))
+var int tradesToday = 0
+if bar_index == 0 or nyDay != nyDay[1]
+    tradesToday := 0
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+
+canTrade = isFlat and (not useWindow or inWin) and (maxTrades == 0 or tradesToday < maxTrades) and not (useFlat and closeHHMM >= flatAt)
+longConf = confirmMode == "Bullish/bearish candle" ? close > open : close > high[1]
+shortConf = confirmMode == "Bullish/bearish candle" ? close < open : close < low[1]
+longSig = canTrade and useLong and bull and not na(touchL) and close > eF and longConf
+shortSig = canTrade and useShort and bear and not na(touchS) and close < eF and shortConf
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := math.round_to_mintick(stopMode == "ATR" ? close - atrMult * atr : pbLow - bufTicks * syminfo.mintick)
+    tpPx := math.round_to_mintick(close + rr * (close - slPx))
+    tradesToday += 1
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message="🟢 LONG " + syminfo.ticker + " (EMA pullback)\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rr) + "R)\nRisk: " + usd((close - slPx) * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)")
+    touchL := na
+    pbLow := na
+else if shortSig
+    slPx := math.round_to_mintick(stopMode == "ATR" ? close + atrMult * atr : pbHigh + bufTicks * syminfo.mintick)
+    tpPx := math.round_to_mintick(close - rr * (slPx - close))
+    tradesToday += 1
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message="🔻 SHORT " + syminfo.ticker + " (EMA pullback)\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rr) + "R)\nRisk: " + usd((slPx - close) * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)")
+    touchS := na
+    pbHigh := na
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots
+plot(eF, "Fast EMA", color=color.teal)
+plot(eM, "Middle EMA", color=color.orange)
+plot(eS, "Slow EMA", color=color.purple, linewidth=2)
+bgcolor(bull ? color.new(color.green, 94) : bear ? color.new(color.red, 94) : na, title="Trend")
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

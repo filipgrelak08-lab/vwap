@@ -1,0 +1,117 @@
+//@version=6
+strategy("Liquidity sweep reversal", shorttitle="Sweep reversal", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Trade the rejection of a sweep, not the breakout. The levels are the high and low of the previous
+// 20 completed candles.
+// Bearish sweep: the candle trades above that high but closes back below it -> short at the close.
+// Bullish sweep: the candle trades below that low but closes back above it -> long at the close.
+// Stop beyond the sweep candle's extreme plus a buffer. Target 2R, or the other side of the range.
+// Optional filters: the swept level is near the previous day's high/low, and a time window.
+//
+// Defaults are for a 5-minute MNQ chart: fixed contracts, commission per contract per side, and any
+// open trade closed at 15:55 New York. margin = 0 turns off TradingView's margin-call simulation,
+// which doesn't fit futures margin.
+//
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+
+// --- inputs
+gL = "Levels"
+lookback = input.int(20, "Lookback (completed candles)", minval=2, group=gL)
+usePd = input.bool(false, "Only near the previous day's high / low", group=gL, tooltip="Short: the swept high is within the tolerance of yesterday's high, or the candle swept yesterday's high itself. Long: mirrored with yesterday's low.")
+pdTolAtr = input.float(0.5, "Tolerance (× ATR)", minval=0.0, step=0.1, group=gL)
+
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+
+gX = "Stop, target and size"
+bufTicks = input.int(2, "Stop buffer beyond the sweep candle (ticks)", minval=0, group=gX)
+tpMode = input.string("Fixed R", "Take profit", options=["Fixed R", "Other side of the range"], group=gX, tooltip="Other side of the range: longs target the lookback high, shorts the lookback low.")
+rr = input.float(2.0, "Fixed R target (× initial risk)", minval=0.1, step=0.25, group=gX)
+minRr = input.float(1.0, "Skip if the range target is under (R)", minval=0.0, step=0.25, group=gX)
+atrLen = input.int(14, "ATR length", minval=1, group=gX)
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+useWindow = input.bool(false, "Only enter between", inline="w", group=gS)
+winSess = input.session("0930-1130", "", inline="w", group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+maxTrades = input.int(0, "Max trades per day (0 = no limit)", minval=0, group=gS)
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+
+// --- levels
+prevHigh = ta.highest(high, lookback)[1]
+prevLow = ta.lowest(low, lookback)[1]
+atr = ta.atr(atrLen)
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+
+bearSweep = high > prevHigh and close < prevHigh
+bullSweep = low < prevLow and close > prevLow
+tol = pdTolAtr * atr
+nearPdh = math.abs(prevHigh - pdh) <= tol or (high > pdh and close < pdh)
+nearPdl = math.abs(prevLow - pdl) <= tol or (low < pdl and close > pdl)
+
+// --- day state
+nyDay = dayofmonth(time, tz)
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+inWin = not na(time(timeframe.period, winSess, tz))
+var int tradesToday = 0
+if bar_index == 0 or nyDay != nyDay[1]
+    tradesToday := 0
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+
+canTrade = isFlat and (not useWindow or inWin) and (maxTrades == 0 or tradesToday < maxTrades) and not (useFlat and closeHHMM >= flatAt)
+
+// stop and target for each side; a candle that sweeps both sides is skipped
+stopL = math.round_to_mintick(low - bufTicks * syminfo.mintick)
+stopS = math.round_to_mintick(high + bufTicks * syminfo.mintick)
+tpL = math.round_to_mintick(tpMode == "Fixed R" ? close + rr * (close - stopL) : prevHigh)
+tpS = math.round_to_mintick(tpMode == "Fixed R" ? close - rr * (stopS - close) : prevLow)
+rrL = (tpL - close) / (close - stopL)
+rrS = (close - tpS) / (stopS - close)
+
+longSig = canTrade and useLong and bullSweep and not bearSweep and (not usePd or nearPdl) and (tpMode == "Fixed R" or rrL >= minRr)
+shortSig = canTrade and useShort and bearSweep and not bullSweep and (not usePd or nearPdh) and (tpMode == "Fixed R" or rrS >= minRr)
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := stopL
+    tpPx := tpL
+    tradesToday += 1
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message="🟢 LONG " + syminfo.ticker + " (sweep of the " + str.tostring(lookback) + "-candle low " + px(prevLow) + ")\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rrL, "#.##") + "R)\nRisk: " + usd((close - slPx) * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)")
+else if shortSig
+    slPx := stopS
+    tpPx := tpS
+    tradesToday += 1
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message="🔻 SHORT " + syminfo.ticker + " (sweep of the " + str.tostring(lookback) + "-candle high " + px(prevHigh) + ")\nEntry: " + px(close) + "\nStop: " + px(slPx) + "\nTake profit: " + px(tpPx) + " (" + str.tostring(rrS, "#.##") + "R)\nRisk: " + usd((slPx - close) * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)")
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots
+plot(prevHigh, "Lookback high", color=color.new(color.teal, 30), style=plot.style_stepline)
+plot(prevLow, "Lookback low", color=color.new(color.maroon, 30), style=plot.style_stepline)
+plot(usePd ? pdh : na, "Previous day high", color=color.new(color.gray, 0), style=plot.style_circles)
+plot(usePd ? pdl : na, "Previous day low", color=color.new(color.gray, 0), style=plot.style_circles)
+plotshape(bearSweep and not bullSweep, "Bearish sweep", shape.triangledown, location.abovebar, color.new(color.red, 40), size=size.tiny)
+plotshape(bullSweep and not bearSweep, "Bullish sweep", shape.triangleup, location.belowbar, color.new(color.green, 40), size=size.tiny)
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)
