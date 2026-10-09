@@ -1,17 +1,22 @@
 //@version=6
-strategy("Bollinger long + rally fade short 4h (alerts)", shorttitle="BB long + fade short", overlay=true, pyramiding=1, process_orders_on_close=true, commission_type=strategy.commission.percent, commission_value=0.05, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=100, margin_short=100)
+strategy("Bollinger long + rally fade short (alerts)", shorttitle="BB long + fade short", overlay=true, pyramiding=1, process_orders_on_close=true, commission_type=strategy.commission.percent, commission_value=0.05, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, margin_long=100, margin_short=100)
 
 // Bollinger breakout long (BB 20/2, EMA100 + SMA300 filters, 3% stop, take profit at 2R, else exit
 // on a close below the middle band) plus the rally fade short: when flat and below the 200 SMA, short a close with
 // RSI(2) > 90 using half the account, cover on a close below the 10 SMA. One position at a time;
 // a long signal closes any short first.
+// Day trading (on by default): every trade is closed on the day's last candle; use a 5m–1h chart.
 //
 // Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}
 // and "Order fills and alert() function calls" selected. Order fills send BUY / SELL / SHORT /
-// COVER / STOP HIT / TAKE PROFIT; the alert() call sends MOVE STOP when a new breakout raises the long stop.
+// COVER / STOP HIT / TAKE PROFIT / END OF DAY; the alert() call sends MOVE STOP when a new breakout raises the long stop.
 
 // --- inputs
 coin = input.string("BTC", "Coin name for alerts", group="Alerts")
+gD = "Day trading"
+dayTrade = input.bool(true, "Close every trade at the end of the day", group=gD, tooltip="Use a 5m–1h chart. The last candle of the day closes any open trade and opens none.")
+dayTz = input.string("UTC", "Day ends at midnight in", options=["UTC", "Europe/London", "Europe/Warsaw", "America/New_York", "Asia/Singapore"], group=gD)
+entryHours = input.session("0000-0000", "Open new trades only between", group=gD, tooltip="In the timezone above. 0000-0000 means all day.")
 tpSlOnly = input.bool(false, "Exit only at take profit or stop loss", group="Exits", tooltip="Turns off the middle-band exit, the 10-SMA cover and the short cover on a long signal. A long signal while short is skipped. A short with its stop or take profit at 0 uses the long's stop % and target instead, mirrored.")
 
 gL = "Bollinger breakout long"
@@ -38,7 +43,12 @@ shortSizePct = input.float(50.0, "Size, % of equity", minval=1.0, maxval=100.0, 
 // --- helpers
 px(x) => str.tostring(x, format.mintick)
 pct(x) => str.tostring(x, "#.##") + "%"
-tf = timeframe.isminutes and timeframe.multiplier % 60 == 0 ? str.tostring(timeframe.multiplier / 60) + "h" : timeframe.period
+tf = not timeframe.isminutes ? timeframe.period : timeframe.multiplier % 60 == 0 ? str.tostring(timeframe.multiplier / 60) + "h" : str.tostring(timeframe.multiplier) + "m"
+
+// the candle whose close falls on the next calendar day is the day's last
+lastBarOfDay = dayofmonth(time_close, dayTz) != dayofmonth(time, dayTz)
+inHours = not na(time(timeframe.period, entryHours, dayTz))
+canOpen = inHours and not (dayTrade and lastBarOfDay)
 
 // --- signals
 [bbMid, bbUpper, bbLower] = ta.bb(close, p_length, p_mult)
@@ -50,9 +60,9 @@ rsiS = ta.rsi(close, s_rsiLen)
 
 regimeOn = not na(regimeMa) and close > regimeMa
 trendOk = not p_trendFilter or close > trendMa
-longEntry = close > bbUpper and trendOk and regimeOn
+longEntry = canOpen and close > bbUpper and trendOk and regimeOn
 longExit = not tpSlOnly and close < bbMid
-shortEntry = useShorts and not longEntry and not na(downMa) and close < downMa and rsiS > s_rsiLevel
+shortEntry = canOpen and useShorts and not longEntry and not na(downMa) and close < downMa and rsiS > s_rsiLevel
 shortExit = not tpSlOnly and close < coverMa
 
 isLong = strategy.position_size > 0
@@ -102,6 +112,10 @@ else if shortEntry and isFlat
 
 if (not na(sStop) or not na(sTp)) and (isShort or (shortEntry and isFlat))
     strategy.exit("SX", from_entry="S", stop=sStop, limit=sTp, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP HIT " + coin + " short (rally fade " + tf + ") at " + px(sStop) + ". Trade is closed, cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + coin + " short (rally fade " + tf + ") at " + px(sTp) + ". Trade is closed, cancel the stop.")
+
+// --- end of day
+if dayTrade and lastBarOfDay and not isFlat
+    strategy.close_all(comment="End of day", alert_message="⏰ END OF DAY " + coin + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
 
 // --- plots
 pUpper = plot(bbUpper, "Upper band", color=color.new(color.blue, 30))
