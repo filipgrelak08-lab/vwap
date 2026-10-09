@@ -12,6 +12,7 @@ strategy("Bollinger long + rally fade short 4h (alerts)", shorttitle="BB long + 
 
 // --- inputs
 coin = input.string("BTC", "Coin name for alerts", group="Alerts")
+tpSlOnly = input.bool(false, "Exit only at take profit or stop loss", group="Exits", tooltip="Turns off the middle-band exit, the 10-SMA cover and the short cover on a long signal. A long signal while short is skipped. A short with its stop or take profit at 0 uses the long's stop % and target instead, mirrored.")
 
 gL = "Bollinger breakout long"
 p_length = input.int(20, "BB length", minval=5, maxval=100, group=gL)
@@ -50,9 +51,9 @@ rsiS = ta.rsi(close, s_rsiLen)
 regimeOn = not na(regimeMa) and close > regimeMa
 trendOk = not p_trendFilter or close > trendMa
 longEntry = close > bbUpper and trendOk and regimeOn
-longExit = close < bbMid
+longExit = not tpSlOnly and close < bbMid
 shortEntry = useShorts and not longEntry and not na(downMa) and close < downMa and rsiS > s_rsiLevel
-shortExit = close < coverMa
+shortExit = not tpSlOnly and close < coverMa
 
 isLong = strategy.position_size > 0
 isShort = strategy.position_size < 0
@@ -64,14 +65,16 @@ var float lTp = na
 newStop = r_stopLossPct > 0 ? close * (1 - r_stopLossPct / 100) : na
 newTp = l_tpR > 0 and not na(newStop) ? close + l_tpR * (close - newStop) : l_tpPct > 0 ? close * (1 + l_tpPct / 100) : na
 
-if longEntry and isShort
+canGoLong = isFlat or (isShort and not tpSlOnly)
+
+if longEntry and isShort and canGoLong
     strategy.close("S", comment="Cover", alert_message="🟩 COVER " + coin + " short now at " + px(close) + ". A BUY signal just fired, so close the short first. The BUY message follows.")
-if longEntry and not isLong
+if longEntry and canGoLong
     lStop := newStop
     lTp := newTp
     stopText = na(newStop) ? "none" : px(newStop) + " (" + pct(r_stopLossPct) + " below, place it on Bybit now)"
     tpText = na(newTp) ? "none fixed" : px(newTp) + " (" + pct((newTp / close - 1) * 100) + " above, place it on Bybit now)"
-    strategy.entry("L", strategy.long, qty=strategy.equity * longSizePct / 100 / close, alert_message="🟢 BUY " + coin + " (Bollinger " + tf + ")\nEntry: " + px(close) + "\nStop loss: " + stopText + "\nTake profit: " + tpText + ". If it isn't hit, hold until the SELL alert (a " + tf + " close below the middle band, now " + px(bbMid) + "). Another breakout close while you are in moves the stop; you'll get a MOVE STOP alert\nSize: " + pct(longSizePct) + " of equity, 1x")
+    strategy.entry("L", strategy.long, qty=strategy.equity * longSizePct / 100 / close, alert_message="🟢 BUY " + coin + " (Bollinger " + tf + ")\nEntry: " + px(close) + "\nStop loss: " + stopText + "\nTake profit: " + tpText + (tpSlOnly ? ". Hold until the stop or take profit is hit" : ". If it isn't hit, hold until the SELL alert (a " + tf + " close below the middle band, now " + px(bbMid) + ")") + ". Another breakout close while you are in moves the stop; you'll get a MOVE STOP alert\nSize: " + pct(longSizePct) + " of equity, 1x")
 else if longEntry and isLong and not na(newStop)
     lStop := newStop
     alert("🔁 MOVE STOP " + coin + " (Bollinger " + tf + ") to " + px(newStop) + ". A new breakout candle closed at " + px(close) + ". Update your Bybit stop.", alert.freq_once_per_bar_close)
@@ -90,10 +93,12 @@ var float sTp = na
 if shortExit and isShort and not longEntry
     strategy.close("S", comment="Cover", alert_message="🟩 COVER " + coin + " short (rally fade " + tf + ") now at " + px(close) + ". Price closed below the " + str.tostring(s_coverLen) + "-candle average. Buy back to close the short and cancel any stop or take profit order.")
 else if shortEntry and isFlat
-    sStop := s_stopPct > 0 ? close * (1 + s_stopPct / 100) : na
-    sTp := s_tpPct > 0 ? close * (1 - s_tpPct / 100) : na
-    sStopText = na(sStop) ? "none in the tested rules" : px(sStop) + " (" + pct(s_stopPct) + " above, place it on Bybit now)"
-    strategy.entry("S", strategy.short, qty=strategy.equity * shortSizePct / 100 / close, alert_message="🔻 SHORT " + coin + " (rally fade " + tf + ")\nEntry: " + px(close) + "\nStop loss: " + sStopText + "\nTake profit: " + (na(sTp) ? "none" : px(sTp) + " (" + pct(s_tpPct) + " below, place it on Bybit now)") + "\nExit: when a " + tf + " candle closes below the " + str.tostring(s_coverLen) + "-candle average, now " + px(coverMa) + ". You'll get a COVER alert\nSize: " + pct(shortSizePct) + " of equity, 1x")
+    sStopPct = s_stopPct > 0 ? s_stopPct : tpSlOnly ? r_stopLossPct : 0.0
+    sStop := sStopPct > 0 ? close * (1 + sStopPct / 100) : na
+    sTp := s_tpPct > 0 ? close * (1 - s_tpPct / 100) : not tpSlOnly ? na : l_tpR > 0 and not na(sStop) ? close - l_tpR * (sStop - close) : l_tpPct > 0 ? close * (1 - l_tpPct / 100) : na
+    sStopText = na(sStop) ? "none in the tested rules" : px(sStop) + " (" + pct(sStopPct) + " above, place it on Bybit now)"
+    sExitText = tpSlOnly ? "Hold until the stop or take profit is hit" : "Exit: when a " + tf + " candle closes below the " + str.tostring(s_coverLen) + "-candle average, now " + px(coverMa) + ". You'll get a COVER alert"
+    strategy.entry("S", strategy.short, qty=strategy.equity * shortSizePct / 100 / close, alert_message="🔻 SHORT " + coin + " (rally fade " + tf + ")\nEntry: " + px(close) + "\nStop loss: " + sStopText + "\nTake profit: " + (na(sTp) ? "none" : px(sTp) + " (" + pct((1 - sTp / close) * 100) + " below, place it on Bybit now)") + "\n" + sExitText + "\nSize: " + pct(shortSizePct) + " of equity, 1x")
 
 if (not na(sStop) or not na(sTp)) and (isShort or (shortEntry and isFlat))
     strategy.exit("SX", from_entry="S", stop=sStop, limit=sTp, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP HIT " + coin + " short (rally fade " + tf + ") at " + px(sStop) + ". Trade is closed, cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + coin + " short (rally fade " + tf + ") at " + px(sTp) + ". Trade is closed, cancel the stop.")
