@@ -1,9 +1,9 @@
 """Turn Dukascopy USATECHIDXUSD 1-minute day files into New York regular-hours bars.
 
     python3 research/video_strategies/fetch_dukascopy.py raw/ 2019-01-01 2026-10-08
-    python3 research/video_strategies/build_data.py raw/ nq.json
+    python3 research/video_strategies/build_data.py raw/ nq.json [SYMBOL]
 
-Writes {"NQ|5m": bars, "NQ|15m": bars} where each bar is [time, open, high, low, close, volume]
+Writes {"NQ|5m": bars, "NQ|15m": bars} (SYMBOL defaults to NQ) where each bar is [time, open, high, low, close, volume]
 and time is New York wall-clock time stored as UTC (the format server.py uses).
 Only 09:30-16:00 New York time is kept. Dukascopy's volume is tick volume, not exchange volume.
 """
@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
 raw_dir, out_file = Path(sys.argv[1]), Path(sys.argv[2])
+symbol = sys.argv[3] if len(sys.argv) > 3 else "NQ"
 
 
 def minutes(path):
@@ -58,11 +59,11 @@ for p in days:
     if sum(1 for r in rows if r[5] > 0) >= 300:
         one.extend(rows)
         kept += 1
-data = {"NQ|5m": aggregate(one, 5), "NQ|15m": aggregate(one, 15)}
+data = {f"{symbol}|5m": aggregate(one, 5), f"{symbol}|15m": aggregate(one, 15)}
 for k, v in data.items():
     for b in v:
         b[1:5] = [round(x, 2) for x in b[1:5]]
         b[5] = round(b[5], 4)
 out_file.write_text(json.dumps(data))
-print(f"{len(days)} day files, {kept} sessions kept, {len(data['NQ|5m'])} 5m bars, {len(data['NQ|15m'])} 15m bars"
+print(f"{len(days)} day files, {kept} sessions kept, {len(data[symbol + '|5m'])} 5m bars, {len(data[symbol + '|15m'])} 15m bars"
       f" ({date.fromtimestamp(one[0][0]) if one else '-'} to {date.fromtimestamp(one[-1][0]) if one else '-'})")

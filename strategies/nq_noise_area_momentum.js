@@ -1,9 +1,11 @@
-// Candle-2 Reversal (fractal model), Nasdaq research version (intraday)
+// Noise-Area Momentum (Zarattini, Aziz & Barbon 2024), Nasdaq research version
 //
-// On higher-timeframe candles built from the session (default 60 minutes from 09:30):
-// candle 2 trades below candle 1's low and closes back above it -> long into candle 3,
-// stop at candle 2's low, target candle 1's high. Mirror for shorts. Flat at the close.
-// Strategy 6 of 6 from research/video_strategies.
+// From "Beat the Market: An Effective Intraday Momentum Strategy" (SSRN 4824172).
+// Each minute-of-day has a typical distance from the open (the average over the last
+// 14 days). Price beyond that "noise area" signals real demand: checked every 30 minutes,
+// go long above the upper boundary or short below the lower one. The stop trails at the
+// boundary or VWAP, whichever is closer to price. Flat at the close.
+// Published-strategy 3 of 3 in research/video_strategies.
 
 // ---- Shared filters (the same block is in every nq_* strategy) ----
 // Each one is a "lever" from the research in research/video_strategies: off by default.
@@ -88,41 +90,54 @@ function barsFor(data, minutes) {
 }
 
 export default {
-  name: 'NQ Candle-2 Reversal',
-  description: 'Higher-timeframe candle sweeps the previous candle’s high/low and closes back inside: trade candle 3.',
+  name: 'NQ Noise-Area Momentum (Zarattini et al.)',
+  description: 'Break out of the usual intraday range (14-day average move from the open), trail at VWAP/boundary.',
 
   params: {
-    htfMinutes: { value: 60, min: 15, max: 120, step: 15, label: 'Candle size (minutes)' },
+    lookbackDays: { value: 14, min: 5, max: 60, label: 'Days in the noise average' },
+    checkMinutes: { value: 30, min: 5, max: 60, step: 5, label: 'Check every N minutes' },
     ...FILTER_PARAMS,
   },
 
-  setup({ data, params, ta }) {
+  setup({ data, params, ta, plot }) {
     const common = sessionContext(data, ta);
     const n = data.length;
-    const bar = ta.sessionBar(data);
-    const per = barsFor(data, params.htfMinutes);
-    // signal[i] is set on the bar that completes a higher-timeframe candle
-    const signal = new Array(n).fill(null);
-    let cur = null, prev = null;
+    const upper = new Array(n).fill(NaN);
+    const lower = new Array(n).fill(NaN);
+    const hist = new Map(); // time of day -> recent |close / open - 1|
+    let dayOpen = NaN;
     for (let i = 0; i < n; i++) {
-      if (bar[i] === 0) { cur = null; prev = null; }
-      if (!cur || bar[i] % per === 0) cur = { h: data.high[i], l: data.low[i] };
-      else { cur.h = Math.max(cur.h, data.high[i]); cur.l = Math.min(cur.l, data.low[i]); }
-      const done = bar[i] % per === per - 1;
-      if (!done) continue;
-      const c = data.close[i];
-      if (prev) {
-        if (cur.l < prev.l && c > prev.l && c < prev.h) signal[i] = { side: 1, stop: cur.l, target: prev.h };
-        else if (cur.h > prev.h && c < prev.h && c > prev.l) signal[i] = { side: -1, stop: cur.h, target: prev.l };
+      if (i === 0 || common.day[i] !== common.day[i - 1]) dayOpen = data.open[i];
+      const tod = data.time[i] % 86400;
+      const past = hist.get(tod) || [];
+      if (past.length >= params.lookbackDays && Number.isFinite(common.pdc[i])) {
+        const sigma = past.slice(-params.lookbackDays).reduce((a, b) => a + b, 0) / params.lookbackDays;
+        upper[i] = Math.max(dayOpen, common.pdc[i]) * (1 + sigma);
+        lower[i] = Math.min(dayOpen, common.pdc[i]) * (1 - sigma);
       }
-      prev = { h: cur.h, l: cur.l };
+      past.push(Math.abs(data.close[i] / dayOpen - 1));
+      if (past.length > 100) past.shift();
+      hist.set(tod, past);
     }
-    return { common, signal };
+    plot('Noise upper', upper, { color: 'up', style: 'dashed' });
+    plot('Noise lower', lower, { color: 'down', style: 'dashed' });
+    plot('VWAP', common.vwap, { color: 'vwap' });
+    return { common, upper, lower };
   },
 
   onBar(ctx) {
-    const s = ctx.ind.signal[ctx.i];
-    if (!s || !ctx.isFlat || ctx.lastBarOfSession) return;
-    enter(ctx, s.side, s.stop, s.target, s.side > 0 ? 'Candle 2 swept low' : 'Candle 2 swept high');
+    const { i, close, ind, params: p } = ctx;
+    const up = ind.upper[i], lo = ind.lower[i], vw = ind.common.vwap[i];
+    if (!Number.isFinite(up)) return;
+    // trailing stop: the boundary or VWAP, whichever is closer to price
+    if (p.nativeStop && ctx.isLong) ctx.setStop(Math.max(up, vw));
+    if (p.nativeStop && ctx.isShort) ctx.setStop(Math.min(lo, vw));
+    const nextT = ctx.data.time[i + 1] % 86400;
+    const onCheck = (nextT - 9.5 * 3600) % (p.checkMinutes * 60) === 0;
+    if (!onCheck || ctx.lastBarOfSession) return;
+    if (ctx.isShort && close > lo) ctx.exit('Back inside noise area');
+    if (ctx.isLong && close < up) ctx.exit('Back inside noise area');
+    if (!ctx.isLong && close > up) enter(ctx, 1, Math.max(up, vw), NaN, 'Above noise area');
+    else if (!ctx.isShort && close < lo) enter(ctx, -1, Math.min(lo, vw), NaN, 'Below noise area');
   },
 };

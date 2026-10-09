@@ -1,9 +1,9 @@
-// Candle-2 Reversal (fractal model), Nasdaq research version (intraday)
+// 5-Minute Opening Range Breakout (Zarattini & Aziz 2023), Nasdaq research version
 //
-// On higher-timeframe candles built from the session (default 60 minutes from 09:30):
-// candle 2 trades below candle 1's low and closes back above it -> long into candle 3,
-// stop at candle 2's low, target candle 1's high. Mirror for shorts. Flat at the close.
-// Strategy 6 of 6 from research/video_strategies.
+// From "Can Day Trading Really Be Profitable?" (SSRN 4416622): if the first 5-minute
+// bar closes up, buy at the open of the next bar; if it closes down, sell short. Stop at
+// the other end of that first bar, target 10R, otherwise flat at the close.
+// Use it on 5-minute data. Published-strategy 1 of 3 in research/video_strategies.
 
 // ---- Shared filters (the same block is in every nq_* strategy) ----
 // Each one is a "lever" from the research in research/video_strategies: off by default.
@@ -88,41 +88,24 @@ function barsFor(data, minutes) {
 }
 
 export default {
-  name: 'NQ Candle-2 Reversal',
-  description: 'Higher-timeframe candle sweeps the previous candle’s high/low and closes back inside: trade candle 3.',
+  name: 'NQ 5-min ORB (Zarattini & Aziz)',
+  description: 'Direction of the first 5-minute bar, stop at its other end, 10R target, flat at the close.',
 
   params: {
-    htfMinutes: { value: 60, min: 15, max: 120, step: 15, label: 'Candle size (minutes)' },
+    targetR: { value: 10, min: 0, max: 20, step: 0.5, label: 'Own target in R (0 = hold to close)' },
     ...FILTER_PARAMS,
   },
 
-  setup({ data, params, ta }) {
-    const common = sessionContext(data, ta);
-    const n = data.length;
-    const bar = ta.sessionBar(data);
-    const per = barsFor(data, params.htfMinutes);
-    // signal[i] is set on the bar that completes a higher-timeframe candle
-    const signal = new Array(n).fill(null);
-    let cur = null, prev = null;
-    for (let i = 0; i < n; i++) {
-      if (bar[i] === 0) { cur = null; prev = null; }
-      if (!cur || bar[i] % per === 0) cur = { h: data.high[i], l: data.low[i] };
-      else { cur.h = Math.max(cur.h, data.high[i]); cur.l = Math.min(cur.l, data.low[i]); }
-      const done = bar[i] % per === per - 1;
-      if (!done) continue;
-      const c = data.close[i];
-      if (prev) {
-        if (cur.l < prev.l && c > prev.l && c < prev.h) signal[i] = { side: 1, stop: cur.l, target: prev.h };
-        else if (cur.h > prev.h && c < prev.h && c > prev.l) signal[i] = { side: -1, stop: cur.h, target: prev.l };
-      }
-      prev = { h: cur.h, l: cur.l };
-    }
-    return { common, signal };
+  setup({ data, ta }) {
+    return { common: sessionContext(data, ta) };
   },
 
   onBar(ctx) {
-    const s = ctx.ind.signal[ctx.i];
-    if (!s || !ctx.isFlat || ctx.lastBarOfSession) return;
-    enter(ctx, s.side, s.stop, s.target, s.side > 0 ? 'Candle 2 swept low' : 'Candle 2 swept high');
+    const { open, close, high, low, params: p } = ctx;
+    if (ctx.sessionBar !== 0 || !ctx.isFlat || close === open) return;
+    const side = close > open ? 1 : -1;
+    const stop = side > 0 ? low : high;
+    const target = p.targetR > 0 ? close + side * p.targetR * Math.abs(close - stop) : NaN;
+    enter(ctx, side, stop, target, side > 0 ? 'First bar up' : 'First bar down');
   },
 };

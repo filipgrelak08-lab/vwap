@@ -55,6 +55,7 @@ function sessionContext(data, ta) {
 function enter(ctx, side, stop, target, label) {
   const { i, close, params: p } = ctx;
   const c = ctx.ind.common;
+  if (!(c.atr[i] > 0)) return false; // ATR still warming up: an ATR stop could not be placed
   if ((p.direction === 'long' && side < 0) || (p.direction === 'short' && side > 0)) return false;
   if (p.dailyTrend && c.trend[i] !== side) return false;
   if (p.vwapSide && side * (close - c.vwap[i]) <= 0) return false;
@@ -65,7 +66,10 @@ function enter(ctx, side, stop, target, label) {
     if (room > 0 && room < p.roomAtr * c.atr[i]) return false;
   }
   const opts = { label };
-  if (p.nativeStop && Number.isFinite(stop) && side * (close - stop) > 0) opts.stop = stop;
+  if (p.nativeStop && Number.isFinite(stop)) {
+    if (side * (close - stop) <= 0) return false; // price is already past the stop
+    opts.stop = stop;
+  }
   if (p.nativeTarget && Number.isFinite(target) && side * (target - close) > 0) opts.target = target;
   if (side > 0) ctx.long(opts);
   else ctx.short(opts);

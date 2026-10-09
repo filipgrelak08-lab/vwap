@@ -1,9 +1,10 @@
-// Candle-2 Reversal (fractal model), Nasdaq research version (intraday)
+// Intraday Momentum (Gao, Han, Li & Zhou 2018), Nasdaq research version
 //
-// On higher-timeframe candles built from the session (default 60 minutes from 09:30):
-// candle 2 trades below candle 1's low and closes back above it -> long into candle 3,
-// stop at candle 2's low, target candle 1's high. Mirror for shorts. Flat at the close.
-// Strategy 6 of 6 from research/video_strategies.
+// From "Market Intraday Momentum" (Journal of Financial Economics): the return from the
+// previous close to 10:00 predicts the return of the last half hour. At 15:30, trade in the
+// direction of that early return and exit at the close. The paper has no stop; this version
+// adds a protective stop (N × ATR) so results can be measured in R.
+// Published-strategy 2 of 3 in research/video_strategies.
 
 // ---- Shared filters (the same block is in every nq_* strategy) ----
 // Each one is a "lever" from the research in research/video_strategies: off by default.
@@ -88,41 +89,39 @@ function barsFor(data, minutes) {
 }
 
 export default {
-  name: 'NQ Candle-2 Reversal',
-  description: 'Higher-timeframe candle sweeps the previous candle’s high/low and closes back inside: trade candle 3.',
+  name: 'NQ Intraday Momentum (last half hour)',
+  description: 'At 15:30, go with the sign of the previous-close-to-10:00 return; exit at the close.',
 
   params: {
-    htfMinutes: { value: 60, min: 15, max: 120, step: 15, label: 'Candle size (minutes)' },
+    entryTime: { value: '15:30', options: ['15:00', '15:30'], label: 'Entry at' },
+    stopAtr: { value: 2, min: 0.5, max: 10, step: 0.5, label: 'Protective stop (× ATR)' },
     ...FILTER_PARAMS,
   },
 
-  setup({ data, params, ta }) {
+  setup({ data, ta }) {
     const common = sessionContext(data, ta);
     const n = data.length;
-    const bar = ta.sessionBar(data);
-    const per = barsFor(data, params.htfMinutes);
-    // signal[i] is set on the bar that completes a higher-timeframe candle
-    const signal = new Array(n).fill(null);
-    let cur = null, prev = null;
+    // signal: sign of (price at 10:00) / (prior close) - 1, known from the bar that ends at 10:00
+    const early = new Array(n).fill(0);
+    let s = 0;
     for (let i = 0; i < n; i++) {
-      if (bar[i] === 0) { cur = null; prev = null; }
-      if (!cur || bar[i] % per === 0) cur = { h: data.high[i], l: data.low[i] };
-      else { cur.h = Math.max(cur.h, data.high[i]); cur.l = Math.min(cur.l, data.low[i]); }
-      const done = bar[i] % per === per - 1;
-      if (!done) continue;
-      const c = data.close[i];
-      if (prev) {
-        if (cur.l < prev.l && c > prev.l && c < prev.h) signal[i] = { side: 1, stop: cur.l, target: prev.h };
-        else if (cur.h > prev.h && c < prev.h && c > prev.l) signal[i] = { side: -1, stop: cur.h, target: prev.l };
-      }
-      prev = { h: cur.h, l: cur.l };
+      if (i === 0 || common.day[i] !== common.day[i - 1]) s = 0;
+      const t = data.time[i] % 86400;
+      const end = t + (i + 1 < n && common.day[i + 1] === common.day[i] ? data.time[i + 1] - data.time[i] : 0);
+      if (t < 36000 && end >= 36000 && Number.isFinite(common.pdc[i])) s = Math.sign(data.close[i] - common.pdc[i]);
+      early[i] = s;
     }
-    return { common, signal };
+    return { common, early };
   },
 
   onBar(ctx) {
-    const s = ctx.ind.signal[ctx.i];
-    if (!s || !ctx.isFlat || ctx.lastBarOfSession) return;
-    enter(ctx, s.side, s.stop, s.target, s.side > 0 ? 'Candle 2 swept low' : 'Candle 2 swept high');
+    const { i, close, ind, params: p } = ctx;
+    if (!ctx.isFlat || !ind.early[i]) return;
+    const [h, m] = p.entryTime.split(':').map(Number);
+    // the bar that closes at the entry time: its next bar opens at entryTime
+    const nextT = ctx.data.time[i + 1] % 86400;
+    if (nextT !== h * 3600 + m * 60) return;
+    const side = ind.early[i];
+    enter(ctx, side, close - side * p.stopAtr * ind.common.atr[i], NaN, side > 0 ? 'Early strength' : 'Early weakness');
   },
 };
