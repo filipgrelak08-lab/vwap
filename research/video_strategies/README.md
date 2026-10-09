@@ -120,6 +120,34 @@ luck. Notes:
 None of this is a guarantee. Prop firms change rules often, and real fills on news days and at the open
 can be worse than modelled. Check the current rules of your firm before relying on these numbers.
 
+## What did best in 2024–2026
+
+`recent_study.js` runs every strategy with no lever, every single lever and every pair of levers
+(2,340 versions), always with at most one trade a day. Versions trading on at least 40% of days are ranked
+on **2024-01-02 to 2026-10-08**. Picking the best of 2,340 always flatters the winner, so the top 40 are
+then run on **2019–2023**, which played no part in the ranking; a version is kept only if it made money
+there too with t ≥ 1.5. Survivors go through the 50K evaluation simulation on 2024–2026, with the risk per
+trade chosen on 2019–2023. Results: `recent_study.csv`.
+
+29 of the top 40 survived, and they are all the **volatility breakout** or the **opening range breakout
+with a profit target**. Versions of the 5-minute ORB and of the ORB with a "room" filter ranked high on
+2024–2026 but had no edge in 2019–2023, so they were dropped. The best:
+
+| Version | Days traded | Win rate | 2024–26 avg R (t) | R in 2024 / 2025 / 2026 | 2019–23 avg R (t) | Losing years 2019–26 | Risk/trade | 50K pass / fail (luck) |
+|---|---|---|---|---|---|---|---|---|
+| **Volatility breakout, 15m bars, target 2R** | 90% | 47% | +0.11 (2.4) | +43.6 / +13.8 / +14.0 | +0.11 (3.3) | none | $300 | **66% / 33% (25%)** |
+| Volatility breakout, daily trend, target 2R | 51% | 50% | +0.16 (2.5) | +29.1 / +8.6 / +20.7 | +0.15 (3.2) | 2020 (−0.3R) | $300 | 59% / 21% (17%) |
+| Opening range breakout, daily trend, target 2R | 45% | 50% | +0.14 (2.1) | +17.4 / +20.1 / +5.2 | +0.13 (2.8) | none | $400 | 58% / 41% (22%) |
+
+Neighbouring versions of the volatility breakout (other targets, entry cut-offs, 3 × ATR stop) all score
+about the same in both periods, so this is a plateau, not one lucky setting. The breakout distance
+(k = 0.3) is the strategy's default, which was also the best on 2019–2024 in `prop_study.js`.
+
+**How to run the top version in the app**: strategy *NQ Volatility Breakout* with default parameters,
+15-minute Nasdaq data, Stops panel *Reward:risk* = 2, sizing *risk per trade*, *Close positions at the
+end of each day* on. The stop is the day's open, about 108 points away on a typical 2024–26 day (75% of
+days under 150), so $300 of risk is roughly 1–2 MNQ and the actual risk per trade varies with rounding.
+
 ## Re-running
 
 ```bash
@@ -128,6 +156,7 @@ python3 research/video_strategies/build_data.py raw/ nq.json
 node research/video_strategies/run.js nq.json research/video_strategies       # ~8 minutes
 node research/video_strategies/robustness.js nq.json research/video_strategies
 node research/video_strategies/prop_study.js nq.json research/video_strategies
+node research/video_strategies/recent_study.js nq.json research/video_strategies   # ~12 minutes
 ```
 
 The strategies are in `strategies/nq_*.js` and appear in the app. Each has the same filter switches as

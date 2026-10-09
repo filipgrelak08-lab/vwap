@@ -1,0 +1,41 @@
+rank,strategy,levers,held_up_earlier,recent_trades,recent_tradeDays,recent_winRate,recent_avgR,recent_t,recent_totalR,recent_maxDDR,recent_losingStreak,R_2024,R_2025,R_2026,earlier_trades,earlier_avgR,earlier_t,earlier_losing_years,risk$,recent_pass,recent_fail,recent_pass_noEdge
+1,opening_range_breakout,with daily trend + target 1R,no,308,45,57.47,0.136,2.61,41.89,-9.51,5,14.81,21.43,5.65,635,0.047,1.3,1,,,,
+2,orb5_zarattini,15m bars + room ≥ 2 ATR to prior-day level,no,528,77,34.47,0.254,2.53,133.96,-34.63,10,110.35,41.27,-17.66,951,0.014,0.24,3,,,,
+3,volatility_breakout,with daily trend + target 2R,yes,354,51,49.72,0.158,2.47,55.94,-12.53,7,27.35,8.36,20.24,703,0.145,3.23,1,300,59.17,20.8,17.26
+4,volatility_breakout,15m bars + target 2R,yes,617,90,47.33,0.11,2.43,68.09,-10.63,12,42.13,12.39,13.57,1125,0.111,3.29,0,300,65.79,32.82,24.96
+5,volatility_breakout,entries until 10:30 + target 1.5R,yes,456,66,49.34,0.127,2.38,57.87,-13.42,8,27.02,18.94,11.91,790,0.1,2.46,0,400,52.85,47.15,35.59
+6,opening_range_breakout,with daily trend + target 1.5R,yes,308,45,51.95,0.144,2.37,44.35,-13.98,7,19.35,17.15,7.84,635,0.109,2.58,0,400,54.7,44.07,28.66
+7,volatility_breakout,stop 3×ATR + target 2R,yes,637,92,48.51,0.105,2.33,66.93,-13.65,8,26.59,24.36,15.98,1158,0.083,2.5,0,300,53.78,43.61,30.97
+8,volatility_breakout,entries until 11:00 + target 1.5R,yes,512,74,48.83,0.112,2.26,57.44,-14.42,8,27.8,16.38,13.26,900,0.109,2.91,0,300,55.01,40.06,33.28
+9,orb5_zarattini,stop 3×ATR + target 2R,no,688,100,43.31,0.109,2.24,75.19,-14.83,10,22.67,29.28,23.24,1246,0.037,1.05,0,,,,
+10,opening_range_breakout,room ≥ 5 ATR to prior-day level + target 1.5R,no,421,61,51.07,0.112,2.24,47.23,-9.17,7,18.6,21.4,7.24,748,0.009,0.23,2,,,,
+11,opening_range_breakout,room ≥ 5 ATR to prior-day level + target 1R,no,421,61,55.58,0.094,2.18,39.69,-6.97,4,12.66,21.46,5.57,748,0.003,0.09,3,,,,
+12,opening_range_breakout,with daily trend + break-even at 1R,yes,308,45,41.23,0.144,2.16,44.24,-13.17,10,23.81,12.51,7.92,635,0.092,2.01,0,500,37.13,62.56,13.25
+13,volatility_breakout,with daily trend + target 1.5R,yes,354,51,51.13,0.125,2.15,44.08,-8.81,7,21.37,9.64,13.06,703,0.115,2.84,1,500,39.45,60.09,16.02
+14,volatility_breakout,entries until 10:30 + target 2R,yes,456,66,45.83,0.127,2.15,57.99,-13.3,8,23.13,20.13,14.74,790,0.135,2.95,0,300,50.85,48.69,35.13
+15,volatility_breakout,stop 3×ATR + target 1R,yes,637,92,55.1,0.077,2.14,49.28,-12.07,8,17.29,19.33,12.66,1158,0.072,2.64,0,500,38.37,61.63,21.57
+16,orb5_zarattini,stop 2×ATR + target 3R,no,688,100,34.01,0.135,2.13,92.82,-21.86,13,33.32,49.26,10.24,1246,0.04,0.87,2,,,,
+17,opening_range_breakout,with daily trend + target 2R,yes,308,45,50,0.139,2.13,42.75,-15.88,7,17.4,20.11,5.24,635,0.126,2.77,0,400,58.24,40.68,22.34
+18,volatility_breakout,15m bars + target 3R,yes,617,90,45.87,0.104,2.11,64,-17.42,12,53.29,1.76,8.96,1125,0.114,3.13,0,250,52.23,43.61,31.74
+19,opening_range_breakout,room ≥ 5 ATR to prior-day level + target 2R,no,421,61,49.17,0.114,2.11,48.1,-9.94,9,19.77,26.16,2.17,748,0.007,0.17,2,,,,
+20,volatility_breakout,15m bars + target 1.5R,yes,617,90,49.59,0.086,2.1,53.18,-11.9,12,35.91,6.99,10.27,1125,0.092,2.98,1,300,58.4,40.83,24.04
+21,volatility_breakout,room ≥ 2 ATR to prior-day level + target 1.5R,yes,633,92,48.5,0.087,2.09,55.04,-15.65,8,36.58,7.48,10.98,1147,0.083,2.67,1,400,48.84,51.16,28.04
+22,volatility_breakout,entries until 11:00 + target 2R,yes,512,74,45.7,0.114,2.09,58.45,-14.3,10,24.4,18.18,15.88,900,0.132,3.15,0,300,57.16,42.84,34.82
+23,volatility_breakout,15m bars + entries until 14:00,yes,590,86,45.93,0.107,2.07,63.28,-15.41,12,45.98,10.66,6.64,1056,0.095,2.41,0,250,48.84,49.61,20.96
+24,opening_range_breakout,room ≥ 2 ATR to prior-day level + target 1R,no,590,86,54.07,0.075,2.03,44.5,-10.08,5,12.92,21.73,9.85,1051,0.015,0.52,1,,,,
+25,volatility_breakout,entries until 12:00 + with daily trend,yes,298,43,47.32,0.167,2.03,49.78,-12.02,5,33.27,8.88,7.62,563,0.179,2.91,0,300,60.55,28.66,23.11
+26,opening_range_breakout,with daily trend + target 3R,yes,308,45,48.7,0.143,2.02,44.01,-15.88,7,14.58,22.51,6.92,635,0.133,2.74,0,400,44.84,54.55,17.87
+27,volatility_breakout,entries until 11:00 + target 1R,yes,512,74,55.08,0.085,2.01,43.35,-9.27,8,19.77,7.1,16.49,900,0.086,2.7,1,400,48.38,50.23,24.96
+28,opening_range_breakout,room ≥ 2 ATR to prior-day level + target 1.5R,no,590,86,48.81,0.086,2,50.97,-18.55,6,21.53,19.49,9.95,1051,0.036,1.1,1,,,,
+29,orb5_zarattini,shorts only + target 2R,no,344,50,39.83,0.156,2,53.61,-13.73,10,15.23,36.32,2.06,583,-0.002,-0.04,2,,,,
+30,volatility_breakout,entries until 10:30 + target 3R,yes,456,66,43.42,0.132,2,60.36,-13.78,10,40.28,12.15,7.93,790,0.133,2.63,0,400,46.53,53.47,36.67
+31,opening_range_breakout,15m bars + target 1R,yes,683,99,55.2,0.067,1.99,45.47,-12.2,6,20.67,22.24,2.56,1241,0.046,1.85,1,400,61.48,38.37,26.04
+32,opening_range_breakout,with daily trend + stop 2×ATR,yes,308,45,41.23,0.179,1.98,55.02,-16.48,7,27.45,13.74,13.83,635,0.174,2.66,0,300,40.99,54.85,24.04
+33,volatility_breakout,entries until 14:00 + target 1.5R,yes,611,89,47.63,0.087,1.98,53.23,-14.29,8,29.34,17.74,6.15,1102,0.085,2.58,1,300,49.46,44.99,26.66
+34,volatility_breakout,entries until 11:00 + target 3R,yes,512,74,43.55,0.121,1.97,61.74,-15.92,10,42.33,9.34,10.07,900,0.135,2.89,0,250,50.23,48.23,29.43
+35,volatility_breakout,VWAP side + target 1.5R,yes,637,92,47.88,0.084,1.96,53.38,-14.97,8,32.23,15.53,5.63,1158,0.087,2.74,1,300,55.93,41.14,25.73
+36,volatility_breakout,target 1.5R,yes,637,92,47.88,0.084,1.96,53.38,-14.97,8,32.23,15.53,5.63,1158,0.087,2.74,1,300,55.93,41.14,25.73
+37,volatility_breakout,entries until 12:00 + target 1.5R,yes,566,82,47.7,0.091,1.96,51.39,-14.14,8,24.31,19.21,7.86,1025,0.094,2.72,0,300,45.92,49.77,32.36
+38,volatility_breakout,stop 3×ATR + target 1.5R,yes,637,92,49.76,0.081,1.95,51.3,-14.05,8,18.1,19.69,13.5,1158,0.065,2.1,0,300,56.86,38.98,32.2
+39,volatility_breakout,15m bars + entries until 11:00,yes,473,69,45.88,0.117,1.95,55.55,-12.45,14,36.07,10.62,8.87,825,0.108,2.33,0,250,52.08,35.59,27.89
+40,orb5_zarattini,stop 3×ATR + target 1.5R,no,688,100,46.22,0.085,1.95,58.53,-15.11,10,25.36,21.02,12.15,1246,0.022,0.69,2,,,,
