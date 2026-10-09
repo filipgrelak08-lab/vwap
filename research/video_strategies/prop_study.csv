@@ -1,0 +1,9 @@
+strategy,learn_trades,learn_tradeDays%,learn_winRate,learn_avgR,learn_t,learn_worstLosingStreak,test_trades,test_tradeDays%,test_winRate,test_avgR,test_t,test_worstLosingStreak,R_2019,R_2020,R_2021,R_2022,R_2023,R_2024,R_2025,R_2026,risk$,learn_pass,learn_fail,learn_medianDays,test_pass,test_fail,test_medianDays,learn_pass_noEdge,test_pass_noEdge,test_expected$perMonth
+Noise-area momentum (long only),453,30,42.4,0.325,4.29,7,119,27,37.8,0.033,0.27,8,22.6,7.44,44.05,22.97,33.61,16.58,1.25,2.7,300,57,23.9,55,1,37.5,119,24.8,0,56
+Opening range breakout + daily trend,752,50,40.7,0.194,3.43,10,189,43,42.9,0.155,1.49,7,13.83,12.44,24.93,35.22,19.5,40.25,19.51,9.83,300,53,42.8,51,45.5,41.8,41,22.5,36.3,420
+Combined: first signal of the day from the two above,920,61,41.4,0.226,4.39,10,248,56,41.1,0.079,0.92,7,21.18,9.78,38.14,53.27,38.35,47.49,16.51,3.12,300,59.7,38.2,36,31.5,61.3,42,26.5,24.5,279
+"5-min ORB, published rules (Zarattini & Aziz)",1495,100,23.5,0.129,2.06,18,439,100,28,0.144,1.26,13,52.04,18.95,52.67,44.82,12.65,12.1,68.59,-5.34,150,43.7,53.8,48,45.3,52.3,50,19.9,28,454
+"5-min ORB, 5R target",1495,100,25.1,0.11,2.02,18,439,100,29.6,0.157,1.6,13,21.35,36.9,34.02,47.47,-2.99,27.6,62.11,6.98,150,39.6,55.8,53,40,59.5,50,20.4,21,495
+"Volatility breakout (k=0.3, daily trend, stop 1.5×ATR)",833,56,34.3,0.279,3.87,12,221,50,38,0.16,1.27,9,25.04,8.58,35.7,96.5,46.86,19.51,13.48,21.88,200,60.6,21.9,60,17.5,24.8,87,13.2,0.5,336
+"Combined: ORB + daily trend, noise-area long, volatility breakout",1094,73,38,0.227,4.14,29,294,67,40.1,0.13,1.38,9,43.36,10.13,35.49,69,68.92,21.61,21.37,16.92,200,64,31.9,55,37.3,34.8,52,12.2,7,366
+nq_prop_combo.js (the same combination as one strategy file),1094,73,38.4,0.231,4.24,15,294,67,40.1,0.128,1.35,9,42.9,10.2,39.82,68.73,67.46,23.87,21.08,16.44,200,63.9,32,55,37.3,35,52,12.7,8,360

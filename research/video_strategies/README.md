@@ -69,6 +69,57 @@ the Nasdaq fell about a third (R per year in `final.csv`). `robustness.js` check
 bar of 2. These are the best candidates here, not a guarantee. Also, CFD data is not futures data,
 fills are modelled at the next bar's open, and the noise-area strategy only goes long.
 
+## Prop-firm version: one trade a day
+
+`prop_study.js` asks a different question: which strategy, taking **at most one trade a day**, passes a
+50K futures evaluation most often? Rules modelled (Topstep 50K Combine / Apex 50K end-of-day style):
++$3,000 target, $2,000 maximum loss trailing the best end-of-day balance (it stops at the starting
+balance), $1,000 daily loss limit, best day under 50% of the total profit, at least 2 trading days. A
+trade's worst point (MAE) counts against the limit intraday. An evaluation is started on every session
+and given up to 120 trading days; one that neither passes nor fails counts as not passed. The risk per
+trade (a fixed dollar amount) is chosen on 2019–2024 and then used unchanged on 2025–2026.
+
+Pass rates alone mislead: with a $3,000 target and a $2,000 trailing loss, a strategy with **no edge**
+still passes fairly often by luck. So every candidate also runs a control: the same trades with their
+average R subtracted (same swings, zero edge). The useful number is the gap between the two.
+
+One more classic once-a-day rule was added here: a **volatility breakout** (Larry Williams / Toby Crabel
+style: close more than k × the prior day's range beyond the open). Its settings (k = 0.3, daily trend,
+1.5 × ATR stop) were picked on 2019–2024.
+
+| Strategy (max 1 trade a day) | Days traded | Win rate | Learn avg R | Test avg R | Risk/trade | Learn pass (no-edge) | Test pass (no-edge) | Test fail |
+|---|---|---|---|---|---|---|---|---|
+| **Combo: first signal of ORB + trend, noise-area long, volatility breakout** | 73% | 38–40% | +0.23 | +0.13 | $200 | **64% (12%)** | **37% (7%)** | 35% |
+| Opening range breakout + daily trend | 50% | 41–43% | +0.19 | +0.16 | $300 | 53% (23%) | 46% (36%) | 42% |
+| Combo of ORB + trend and noise-area long | 61% | 41% | +0.23 | +0.08 | $300 | 60% (27%) | 32% (25%) | 61% |
+| Volatility breakout + daily trend | 56% | 34–38% | +0.28 | +0.16 | $200 | 61% (13%) | 18% (1%) | 25% |
+| 5-min ORB, published rules | 100% | 24–28% | +0.13 | +0.14 | $150 | 44% (20%) | 45% (28%) | 52% |
+| Noise-area momentum, long only | 30% | 38–42% | +0.33 | +0.03 | $300 | 57% (25%) | 1% (0%) | 38% |
+
+Full numbers, including R per calendar year, are in `prop_study.csv`; pass and fail rates at every risk
+level are in `prop_risk.csv`.
+
+**The best fit is the three-rule combo**, saved as one strategy: `strategies/nq_prop_combo.js`
+(it reproduces the study: 1,094 trades at +0.23R on 2019–2024, 294 at +0.13R on 2025–2026). It trades
+on about three days in four, was positive in every calendar year 2019–2026, and has the widest gap over
+luck. Notes:
+
+- **Keep the risk small.** Pass rates peak at $150–250 per trade and fall fast above $300 (2025–26 at
+  $300: 25% pass, 73% fail). The 5-minute ATR on NQ in 2025–26 was about 34 points (middle half 24–47),
+  so a 1.5 × ATR stop is about 50 points: $200 of risk is about 2 MNQ contracts.
+- **It is slow.** At $200 a trade it makes roughly $20–35 a day on average, so passes take about
+  50 trading days (median), and many 2025–26 runs were still going after 120 days.
+- **The noise-area rule needs its re-entries.** Alone and limited to one trade a day, its 2025–26 edge
+  disappears (+0.03R), so it only works here as one leg of the combo.
+- **Nasdaq, not the S&P 500.** Run unchanged on the S&P 500 CFD, the combo is positive but weaker:
+  +0.10R a trade in 2019–2024 (t = 2.0) and +0.04R in 2025–2026 (t = 0.5).
+- **The 5-minute ORB paper.** Its published rules were positive here (+0.14R on 2025–26), but with a
+  24–28% win rate and losing streaks of 13 it fails more evaluations than it passes. An independent
+  replication on CFD data found no edge after costs, so treat it with care.
+
+None of this is a guarantee. Prop firms change rules often, and real fills on news days and at the open
+can be worse than modelled. Check the current rules of your firm before relying on these numbers.
+
 ## Re-running
 
 ```bash
@@ -76,6 +127,7 @@ python3 research/video_strategies/fetch_dukascopy.py raw/ 2019-01-01 2026-10-08 
 python3 research/video_strategies/build_data.py raw/ nq.json
 node research/video_strategies/run.js nq.json research/video_strategies       # ~8 minutes
 node research/video_strategies/robustness.js nq.json research/video_strategies
+node research/video_strategies/prop_study.js nq.json research/video_strategies
 ```
 
 The strategies are in `strategies/nq_*.js` and appear in the app. Each has the same filter switches as
