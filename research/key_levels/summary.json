@@ -1,0 +1,9 @@
+{
+ "timing_days": 988,
+ "first_hour": {
+  "days": 988,
+  "ext15": 618,
+  "ext20": 329,
+  "both": 222
+ }
+}
