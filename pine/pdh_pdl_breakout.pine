@@ -1,0 +1,124 @@
+//@version=6
+strategy("Previous-day high/low breakout (MNQ 5m)", shorttitle="PDH/PDL breakout", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Continuation through the previous regular session's high or low (9:30-16:00 ET), built from this
+// chart's own candles so early closes count correctly and days with no session are skipped. The
+// levels stay fixed for the whole day.
+// Long: between 9:45 and 11:30, a candle closes above PDH in the top 25% of its range (optionally
+// above VWAP). By default it must be a fresh cross (the previous candle closed at or below PDH), so a
+// gap open above PDH isn't a breakout. Short: mirrored below PDL.
+// Stop 1 tick beyond the breakout candle; target 2R; skipped when the stop is wider than
+// 1.5 x ATR(14). One trade per day; any open trade closed at 15:55.
+//
+// margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+stratName = "PDH/PDL breakout"
+
+// --- inputs
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+closePct = input.float(25.0, "Close within the candle's top / bottom (%)", minval=1.0, maxval=100.0, group=gE)
+needCross = input.bool(true, "Must cross the level on the breakout candle", group=gE, tooltip="Off: any qualifying close beyond the level counts, including after a gap open beyond it.")
+useVwap = input.bool(false, "VWAP filter: longs above, shorts below", group=gE)
+
+gX = "Stop, target and size"
+bufTicks = input.int(1, "Stop buffer (ticks)", minval=0, group=gX)
+atrLen = input.int(14, "ATR length", minval=1, group=gX)
+maxStopAtr = input.float(1.5, "Skip if the stop is wider than (× ATR, 0 = off)", minval=0.0, step=0.25, group=gX)
+rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX)
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+winSess = input.session("0945-1130", "Take entries between", group=gS)
+maxTrades = input.int(1, "Max trades per day", minval=1, group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+
+if timeframe.in_seconds() > 900
+    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+entryText(bool buy, float sl, float tp) =>
+    risk = math.abs(close - sl)
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)"
+
+// --- session
+nyDay = dayofmonth(time, tz)
+newDay = bar_index == 0 or nyDay != nyDay[1]
+inRTH = not na(time(timeframe.period, "0930-1600", tz))
+rthStart = inRTH and (not inRTH[1] or newDay)
+inWin = not na(time(timeframe.period, winSess, tz))
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+vw = ta.vwap(hlc3, rthStart)
+atr = ta.atr(atrLen)
+
+// --- previous regular session's high and low
+var float curH = na
+var float curL = na
+var float pdh = na
+var float pdl = na
+var int tradesToday = 0
+
+if newDay
+    tradesToday := 0
+if rthStart
+    pdh := curH
+    pdl := curL
+    curH := high
+    curL := low
+else if inRTH
+    curH := math.max(curH, high)
+    curL := math.min(curL, low)
+
+rng = high - low
+closeTop = rng > 0 and (close - low) / rng >= 1 - closePct / 100
+closeBottom = rng > 0 and (high - close) / rng >= 1 - closePct / 100
+stopL = math.round_to_mintick(low - bufTicks * syminfo.mintick)
+stopS = math.round_to_mintick(high + bufTicks * syminfo.mintick)
+riskOkL = maxStopAtr == 0 or close - stopL <= maxStopAtr * atr
+riskOkS = maxStopAtr == 0 or stopS - close <= maxStopAtr * atr
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+canTrade = isFlat and inRTH and inWin and not na(pdh) and tradesToday < maxTrades and not (useFlat and closeHHMM >= flatAt)
+
+longSig = canTrade and useLong and close > pdh and (not needCross or close[1] <= pdh) and closeTop and (not useVwap or close > vw) and riskOkL
+shortSig = canTrade and useShort and close < pdl and (not needCross or close[1] >= pdl) and closeBottom and (not useVwap or close < vw) and riskOkS
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := stopL
+    tpPx := math.round_to_mintick(close + rr * (close - stopL))
+    tradesToday += 1
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message=entryText(true, slPx, tpPx))
+else if shortSig
+    slPx := stopS
+    tpPx := math.round_to_mintick(close - rr * (stopS - close))
+    tradesToday += 1
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message=entryText(false, slPx, tpPx))
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots
+plot(inRTH ? pdh : na, "Previous-day high", color=color.teal, linewidth=2, style=plot.style_linebr)
+plot(inRTH ? pdl : na, "Previous-day low", color=color.maroon, linewidth=2, style=plot.style_linebr)
+plot(useVwap and inRTH ? vw : na, "Session VWAP", color=color.blue, style=plot.style_linebr)
+bgcolor(inWin ? color.new(color.blue, 95) : na, title="Entry window")
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

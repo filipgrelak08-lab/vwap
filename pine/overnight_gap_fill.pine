@@ -1,0 +1,126 @@
+//@version=6
+strategy("Overnight gap fill (MNQ 5m)", shorttitle="Gap fill", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Fade an overnight gap back toward the previous regular-session close.
+// Previous close: the close of the last candle inside the previous 9:30-16:00 ET session, so early
+// closes (13:00/13:15) use their real last candle and days with no regular session are skipped.
+// Today's open: the open of the first candle at or after 9:30. Gap = open - previous close.
+// Minimum gap: 0.15 x daily ATR(14) from completed daily candles.
+// Long (gap down): after 9:45 a candle closes above today's open while still below the previous
+// close; target the previous close. Short (gap up): mirrored.
+// Stop: 1 tick beyond the lowest low (highest high for shorts) since the open. Needs 1.5R of reward.
+// Skipped once price has already reached the previous close. One attempt per day; any open trade
+// is closed at 15:55. This is a reversal strategy and can struggle on strong trend days.
+//
+// margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+stratName = "gap fill"
+
+// --- inputs
+gG = "Gap"
+useLong = input.bool(true, "Trade gap downs (long)", group=gG)
+useShort = input.bool(true, "Trade gap ups (short)", group=gG)
+minGapAtr = input.float(0.15, "Minimum gap (× daily ATR)", minval=0.0, step=0.05, group=gG, tooltip="Start with 0.15, then compare other thresholds.")
+dAtrLen = input.int(14, "Daily ATR length", minval=1, group=gG)
+
+gX = "Stop, target and size"
+bufTicks = input.int(1, "Stop buffer (ticks)", minval=0, group=gX)
+minRr = input.float(1.5, "Minimum reward (R)", minval=0.0, step=0.25, group=gX)
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+winSess = input.session("0945-1530", "Take entries between", group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+
+if timeframe.in_seconds() > 900
+    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+entryText(bool buy, float sl, float tp) =>
+    risk = math.abs(close - sl)
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (previous close, " + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)"
+
+// --- session
+nyDay = dayofmonth(time, tz)
+newDay = bar_index == 0 or nyDay != nyDay[1]
+inRTH = not na(time(timeframe.period, "0930-1600", tz))
+rthStart = inRTH and (not inRTH[1] or newDay)
+inWin = not na(time(timeframe.period, winSess, tz))
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+
+// completed daily candles only
+dAtr = request.security(syminfo.tickerid, "D", ta.atr(dAtrLen)[1], lookahead=barmerge.lookahead_on)
+
+var float lastRthClose = na
+var float prevClose = na
+var float dayOpen = na
+var float dayHigh = na
+var float dayLow = na
+var bool attempted = false
+
+if rthStart
+    prevClose := lastRthClose
+    dayOpen := open
+    dayHigh := high
+    dayLow := low
+    attempted := false
+else if inRTH
+    dayHigh := math.max(dayHigh, high)
+    dayLow := math.min(dayLow, low)
+if inRTH
+    lastRthClose := close
+
+gap = dayOpen - prevClose
+bigGap = not na(prevClose) and not na(dAtr) and math.abs(gap) >= minGapAtr * dAtr
+gapDown = bigGap and dayOpen < prevClose
+gapUp = bigGap and dayOpen > prevClose
+
+stopL = math.round_to_mintick(dayLow - bufTicks * syminfo.mintick)
+stopS = math.round_to_mintick(dayHigh + bufTicks * syminfo.mintick)
+rrL = (prevClose - close) / (close - stopL)
+rrS = (close - prevClose) / (stopS - close)
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+canTrade = isFlat and inRTH and inWin and not attempted and not (useFlat and closeHHMM >= flatAt)
+
+// dayHigh / dayLow include this candle, so a candle that tags the previous close is skipped too
+longSig = canTrade and useLong and gapDown and dayHigh < prevClose and close > dayOpen and close < prevClose and rrL >= minRr
+shortSig = canTrade and useShort and gapUp and dayLow > prevClose and close < dayOpen and close > prevClose and rrS >= minRr
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := stopL
+    tpPx := math.round_to_mintick(prevClose)
+    attempted := true
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message=entryText(true, slPx, tpPx))
+else if shortSig
+    slPx := stopS
+    tpPx := math.round_to_mintick(prevClose)
+    attempted := true
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message=entryText(false, slPx, tpPx))
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="Gap filled", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 GAP FILLED " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="Gap filled", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 GAP FILLED " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots
+plot(inRTH ? prevClose : na, "Previous RTH close", color=color.purple, linewidth=2, style=plot.style_linebr)
+plot(inRTH ? dayOpen : na, "Today's open", color=color.gray, style=plot.style_linebr)
+bgcolor(inRTH and gapDown ? color.new(color.green, 95) : inRTH and gapUp ? color.new(color.red, 95) : na, title="Qualifying gap")
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

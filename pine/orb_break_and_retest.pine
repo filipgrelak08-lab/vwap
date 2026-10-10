@@ -1,0 +1,153 @@
+//@version=6
+strategy("ORB break and retest (MNQ 5m)", shorttitle="ORB retest", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Opening range (9:30-9:45 ET) break and retest. The levels are only used after 9:45.
+// Long: a candle closes above the range high (a fresh cross) and the breakout is recorded. Within
+// the next 6 candles, a retest candle's low comes within 2 ticks of the range high (or below it),
+// the candle closes above the range high and is bullish -> long at its close.
+// The setup is cancelled if a candle closes back below the range high, or after 6 candles with no
+// valid retest; a new breakout can then be recorded. Short: mirrored at the range low.
+// Stop 1 tick beyond the retest candle; target 2R; skipped when the stop is wider than 1.5 x ATR(14)
+// (the setup stays open for a later retest). One trade per day; any open trade closed at 15:55.
+//
+// Setup states: 0 waiting for the range, 1 waiting for a breakout, 2 waiting for a long retest,
+// 3 waiting for a short retest, 4 done for the day.
+//
+// margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+stratName = "ORB retest"
+WAIT_RANGE = 0
+WAIT_BREAKOUT = 1
+WAIT_RETEST_L = 2
+WAIT_RETEST_S = 3
+DONE = 4
+
+// --- inputs
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+retestBars = input.int(6, "Retest must come within (candles)", minval=1, group=gE)
+tolTicks = input.int(2, "Retest tolerance (ticks)", minval=0, group=gE)
+
+gX = "Stop, target and size"
+bufTicks = input.int(1, "Stop buffer (ticks)", minval=0, group=gX)
+atrLen = input.int(14, "ATR length", minval=1, group=gX)
+maxStopAtr = input.float(1.5, "Skip if the stop is wider than (× ATR, 0 = off)", minval=0.0, step=0.25, group=gX)
+rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX)
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+orSess = input.session("0930-0945", "Opening range", group=gS)
+winSess = input.session("0945-1130", "Breakouts and entries between", group=gS)
+maxTrades = input.int(1, "Max trades per day", minval=1, group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+
+if timeframe.in_seconds() > 900
+    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+entryText(bool buy, float sl, float tp) =>
+    risk = math.abs(close - sl)
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)"
+
+// --- session
+nyDay = dayofmonth(time, tz)
+newDay = bar_index == 0 or nyDay != nyDay[1]
+inRTH = not na(time(timeframe.period, "0930-1600", tz))
+inOR = not na(time(timeframe.period, orSess, tz))
+inWin = not na(time(timeframe.period, winSess, tz))
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+atr = ta.atr(atrLen)
+tol = tolTicks * syminfo.mintick
+
+var float orH = na
+var float orL = na
+var int state = WAIT_RANGE
+var int brkBar = na
+var int tradesToday = 0
+
+if newDay
+    orH := na
+    orL := na
+    state := WAIT_RANGE
+    brkBar := na
+    tradesToday := 0
+
+if inOR
+    orH := na(orH) ? high : math.max(orH, high)
+    orL := na(orL) ? low : math.min(orL, low)
+else if state == WAIT_RANGE and not na(orH)
+    state := WAIT_BREAKOUT
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+lateOk = not (useFlat and closeHHMM >= flatAt)
+
+// 1. cancel or expire a waiting setup
+if state == WAIT_RETEST_L and (close < orH or bar_index - brkBar > retestBars or not inWin)
+    state := WAIT_BREAKOUT
+if state == WAIT_RETEST_S and (close > orL or bar_index - brkBar > retestBars or not inWin)
+    state := WAIT_BREAKOUT
+
+// 2. a valid retest
+stopL = math.round_to_mintick(low - bufTicks * syminfo.mintick)
+stopS = math.round_to_mintick(high + bufTicks * syminfo.mintick)
+riskOkL = maxStopAtr == 0 or close - stopL <= maxStopAtr * atr
+riskOkS = maxStopAtr == 0 or stopS - close <= maxStopAtr * atr
+canTrade = isFlat and inWin and lateOk and tradesToday < maxTrades
+longSig = canTrade and state == WAIT_RETEST_L and bar_index > brkBar and low <= orH + tol and close > orH and close > open and riskOkL
+shortSig = canTrade and state == WAIT_RETEST_S and bar_index > brkBar and high >= orL - tol and close < orL and close < open and riskOkS
+
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := stopL
+    tpPx := math.round_to_mintick(close + rr * (close - stopL))
+    tradesToday += 1
+    state := tradesToday >= maxTrades ? DONE : WAIT_BREAKOUT
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message=entryText(true, slPx, tpPx))
+else if shortSig
+    slPx := stopS
+    tpPx := math.round_to_mintick(close - rr * (stopS - close))
+    tradesToday += 1
+    state := tradesToday >= maxTrades ? DONE : WAIT_BREAKOUT
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message=entryText(false, slPx, tpPx))
+
+// 3. record a new breakout (a fresh close through the level)
+brkL = false
+brkS = false
+if state == WAIT_BREAKOUT and isFlat and inWin and lateOk and not longSig and not shortSig
+    if useLong and close > orH and close[1] <= orH
+        state := WAIT_RETEST_L
+        brkBar := bar_index
+        brkL := true
+    else if useShort and close < orL and close[1] >= orL
+        state := WAIT_RETEST_S
+        brkBar := bar_index
+        brkS := true
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots (range levels appear only after 9:45)
+showOR = state != WAIT_RANGE and inRTH
+plot(showOR ? orH : na, "Range high", color=color.teal, linewidth=2, style=plot.style_linebr)
+plot(showOR ? orL : na, "Range low", color=color.maroon, linewidth=2, style=plot.style_linebr)
+bgcolor(inOR ? color.new(color.gray, 85) : state == WAIT_RETEST_L ? color.new(color.green, 92) : state == WAIT_RETEST_S ? color.new(color.red, 92) : na, title="Range forming / waiting for retest")
+plotshape(brkL, "Breakout up recorded", shape.triangleup, location.belowbar, color.new(color.green, 30), size=size.tiny)
+plotshape(brkS, "Breakout down recorded", shape.triangledown, location.abovebar, color.new(color.red, 30), size=size.tiny)
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

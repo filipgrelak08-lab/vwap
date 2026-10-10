@@ -1,0 +1,125 @@
+//@version=6
+strategy("Initial balance breakout (MNQ 5m)", shorttitle="IB breakout", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+
+// Breakout of the initial balance (IB): the high and low of 9:30-10:30 ET. The levels are only used
+// once the full hour is complete.
+// Long: between 10:30 and 12:00, a candle closes above the IB high and in the top 25% of its own
+// range (optionally above VWAP). Short: mirrored below the IB low.
+// Stop: the IB midpoint, or 1 tick beyond the breakout candle's other end. Target in R (test 1.5
+// and 2). One trade per day; after a trade in one direction the opposite side is off for the day,
+// so a failed breakout is never reversed. Any open trade is closed at 15:55.
+//
+// margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+stratName = "IB breakout"
+
+// --- inputs
+gE = "Entries"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+closePct = input.float(25.0, "Close within the candle's top / bottom (%)", minval=1.0, maxval=100.0, group=gE)
+useVwap = input.bool(false, "VWAP filter: longs above, shorts below", group=gE)
+
+gX = "Stop, target and size"
+stopMode = input.string("IB midpoint", "Stop", options=["IB midpoint", "Breakout candle"], group=gX)
+bufTicks = input.int(1, "Breakout-candle stop buffer (ticks)", minval=0, group=gX)
+rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX, tooltip="Test 1.5 and 2.")
+contracts = input.int(1, "Contracts", minval=1, group=gX)
+
+gS = "Session (New York time)"
+ibSess = input.session("0930-1030", "Initial balance", group=gS)
+winSess = input.session("1030-1200", "Take entries between", group=gS)
+maxTrades = input.int(1, "Max trades per day", minval=1, group=gS)
+useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+
+if timeframe.in_seconds() > 900
+    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
+
+// --- helpers
+px(x) => str.tostring(x, format.mintick)
+usd(x) => "$" + str.tostring(x, "#,##0.00")
+entryText(bool buy, float sl, float tp) =>
+    risk = math.abs(close - sl)
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)"
+
+// --- session
+nyDay = dayofmonth(time, tz)
+newDay = bar_index == 0 or nyDay != nyDay[1]
+inRTH = not na(time(timeframe.period, "0930-1600", tz))
+rthStart = inRTH and (not inRTH[1] or newDay)
+inIB = not na(time(timeframe.period, ibSess, tz))
+inWin = not na(time(timeframe.period, winSess, tz))
+closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+vw = ta.vwap(hlc3, rthStart)
+
+// --- initial balance, rebuilt every New York day and only usable once complete
+var float ibH = na
+var float ibL = na
+var bool ibReady = false
+var int tradesToday = 0
+var int dayDir = 0
+
+if newDay
+    ibH := na
+    ibL := na
+    ibReady := false
+    tradesToday := 0
+    dayDir := 0
+
+if inIB
+    ibH := na(ibH) ? high : math.max(ibH, high)
+    ibL := na(ibL) ? low : math.min(ibL, low)
+else if not na(ibH) and not ibReady
+    ibReady := true
+
+ibMid = (ibH + ibL) / 2
+rng = high - low
+closeTop = rng > 0 and (close - low) / rng >= 1 - closePct / 100
+closeBottom = rng > 0 and (high - close) / rng >= 1 - closePct / 100
+
+isLong = strategy.position_size > 0
+isShort = strategy.position_size < 0
+isFlat = strategy.position_size == 0
+canTrade = isFlat and ibReady and inWin and tradesToday < maxTrades and not (useFlat and closeHHMM >= flatAt)
+
+longSig = canTrade and useLong and dayDir != -1 and close > ibH and closeTop and (not useVwap or close > vw)
+shortSig = canTrade and useShort and dayDir != 1 and close < ibL and closeBottom and (not useVwap or close < vw)
+
+// --- orders
+var float slPx = na
+var float tpPx = na
+
+if longSig
+    slPx := math.round_to_mintick(stopMode == "IB midpoint" ? ibMid : low - bufTicks * syminfo.mintick)
+    tpPx := math.round_to_mintick(close + rr * (close - slPx))
+    tradesToday += 1
+    dayDir := 1
+    strategy.entry("Long", strategy.long, qty=contracts, alert_message=entryText(true, slPx, tpPx))
+else if shortSig
+    slPx := math.round_to_mintick(stopMode == "IB midpoint" ? ibMid : high + bufTicks * syminfo.mintick)
+    tpPx := math.round_to_mintick(close - rr * (slPx - close))
+    tradesToday += 1
+    dayDir := -1
+    strategy.entry("Short", strategy.short, qty=contracts, alert_message=entryText(false, slPx, tpPx))
+
+// placed on the entry candle too, so the stop and target are live from the next candle
+if isLong or longSig
+    strategy.exit("LX", from_entry="Long", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " long closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ". Cancel the stop order.")
+if isShort or shortSig
+    strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
+
+if useFlat and not isFlat and closeHHMM >= flatAt
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
+
+// --- plots (IB levels appear only after 10:30)
+showIB = ibReady and inRTH
+plot(showIB ? ibH : na, "IB high", color=color.teal, linewidth=2, style=plot.style_linebr)
+plot(showIB ? ibMid : na, "IB midpoint", color=color.gray, style=plot.style_linebr)
+plot(showIB ? ibL : na, "IB low", color=color.maroon, linewidth=2, style=plot.style_linebr)
+plot(useVwap and inRTH ? vw : na, "Session VWAP", color=color.blue, style=plot.style_linebr)
+bgcolor(inIB ? color.new(color.gray, 88) : na, title="Initial balance forming")
+plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)
