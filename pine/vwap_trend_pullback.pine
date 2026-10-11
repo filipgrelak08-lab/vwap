@@ -10,6 +10,9 @@ strategy("VWAP trend pullback (MNQ 5m)", shorttitle="VWAP pullback", overlay=tru
 // more than 2 x ATR from VWAP on the candle before the pullback. A VWAP touch can only be used once:
 // after an entry, the next trade needs a touch that comes after it.
 // Entries 9:45-11:30 ET, one position at a time, any open trade closed at 15:55.
+// Size: by default each trade risks about $100. Contracts = $100 / (stop distance x $ per point),
+// rounded down and capped at 10; a setup whose stop costs more than $100 on 1 contract is skipped.
+// Switch "Position size" to "Fixed contracts" for a set number of contracts instead.
 //
 // margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
 // Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
@@ -32,7 +35,10 @@ bufTicks = input.int(1, "Stop buffer (ticks)", minval=0, group=gX)
 atrLen = input.int(14, "ATR length", minval=1, group=gX)
 maxStopAtr = input.float(1.5, "Skip if the stop is wider than (× ATR, 0 = off)", minval=0.0, step=0.25, group=gX)
 rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX)
-contracts = input.int(1, "Contracts", minval=1, group=gX)
+sizeMode = input.string("Fixed $ risk", "Position size", options=["Fixed $ risk", "Fixed contracts"], group=gX)
+riskUsd = input.float(100.0, "Risk per trade ($)", minval=1.0, step=10.0, group=gX, tooltip="Contracts = risk ÷ (stop distance × $ per point), rounded down. A setup whose stop costs more than this on 1 contract is skipped. Commission and slippage come on top.")
+maxContracts = input.int(10, "Max contracts", minval=1, group=gX)
+contracts = input.int(1, "Contracts (fixed contracts mode)", minval=1, group=gX)
 
 gS = "Session (New York time)"
 winSess = input.session("0945-1130", "Take entries between", group=gS)
@@ -46,9 +52,9 @@ if timeframe.in_seconds() > 900
 // --- helpers
 px(x) => str.tostring(x, format.mintick)
 usd(x) => "$" + str.tostring(x, "#,##0.00")
-entryText(bool buy, float sl, float tp) =>
+entryText(bool buy, float sl, float tp, int qty) =>
     risk = math.abs(close - sl)
-    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * contracts) + " on " + str.tostring(contracts) + " contract(s)"
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * qty) + " on " + str.tostring(qty) + " contract(s)"
 
 // --- session
 nyDay = dayofmonth(time, tz)
@@ -85,13 +91,19 @@ stopS = math.round_to_mintick(ta.highest(high, pbBars + 1) + bufTicks * syminfo.
 riskOkL = maxStopAtr == 0 or close - stopL <= maxStopAtr * atr
 riskOkS = maxStopAtr == 0 or stopS - close <= maxStopAtr * atr
 
+// contracts for a stop this many points away
+sizeFor(float riskPts) =>
+    sizeMode == "Fixed contracts" ? contracts : math.min(maxContracts, int(math.floor(riskUsd / (riskPts * syminfo.pointvalue))))
+qtyL = sizeFor(close - stopL)
+qtyS = sizeFor(stopS - close)
+
 isLong = strategy.position_size > 0
 isShort = strategy.position_size < 0
 isFlat = strategy.position_size == 0
 canTrade = isFlat and inWin and (maxTrades == 0 or tradesToday < maxTrades) and not (useFlat and closeHHMM >= flatAt)
 
-longSig = canTrade and useLong and close > vw and vw > vw[slopeBars] and eF > eS and touchL and close > open and extOk and riskOkL
-shortSig = canTrade and useShort and close < vw and vw < vw[slopeBars] and eF < eS and touchS and close < open and extOk and riskOkS
+longSig = canTrade and useLong and close > vw and vw > vw[slopeBars] and eF > eS and touchL and close > open and extOk and riskOkL and qtyL >= 1
+shortSig = canTrade and useShort and close < vw and vw < vw[slopeBars] and eF < eS and touchS and close < open and extOk and riskOkS and qtyS >= 1
 
 // --- orders
 var float slPx = na
@@ -102,13 +114,13 @@ if longSig
     tpPx := math.round_to_mintick(close + rr * (close - stopL))
     tradesToday += 1
     lastEntryBar := bar_index
-    strategy.entry("Long", strategy.long, qty=contracts, alert_message=entryText(true, slPx, tpPx))
+    strategy.entry("Long", strategy.long, qty=qtyL, alert_message=entryText(true, slPx, tpPx, qtyL))
 else if shortSig
     slPx := stopS
     tpPx := math.round_to_mintick(close - rr * (stopS - close))
     tradesToday += 1
     lastEntryBar := bar_index
-    strategy.entry("Short", strategy.short, qty=contracts, alert_message=entryText(false, slPx, tpPx))
+    strategy.entry("Short", strategy.short, qty=qtyS, alert_message=entryText(false, slPx, tpPx, qtyS))
 
 // placed on the entry candle too, so the stop and target are live from the next candle
 if isLong or longSig
