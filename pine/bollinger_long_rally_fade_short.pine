@@ -15,7 +15,7 @@ strategy("Bollinger long + rally fade short (alerts)", shorttitle="BB long + fad
 coin = input.string("BTC", "Coin name for alerts", group="Alerts")
 gD = "Day trading"
 dayTrade = input.bool(true, "Close every trade at the end of the day", group=gD, tooltip="Use a 5m–1h chart. The last candle of the day closes any open trade and opens none.")
-dayTz = input.string("UTC", "Day ends at midnight in", options=["UTC", "Europe/London", "Europe/Warsaw", "America/New_York", "Asia/Singapore"], group=gD)
+dayTz = input.string("UTC", "Day ends at midnight in", options=["UTC", "Europe/Stockholm", "Europe/London", "Europe/Warsaw", "America/New_York", "Asia/Singapore"], group=gD)
 entryHours = input.session("0000-0000", "Open new trades only between", group=gD, tooltip="In the timezone above. 0000-0000 means all day.")
 tpSlOnly = input.bool(false, "Exit only at take profit or stop loss", group="Exits", tooltip="Turns off the middle-band exit, the 10-SMA cover and the short cover on a long signal. A long signal while short is skipped. A short with its stop or take profit at 0 uses the long's stop % and target instead, mirrored.")
 
