@@ -155,7 +155,7 @@ def backtest(mk, atr_len=14, rr=2.0, flat=1555, start=945, until=1130, touch=3, 
                 if pts is None:
                     break
                 trades.append(dict(time=T[i], side="long" if side > 0 else "short", entry=C[i], stop=stop,
-                                   risk_pts=risk, exit=why, usd=pts * POINT_VALUE - cost))
+                                   risk_pts=risk, exit=why, r=pts / risk, usd=pts * POINT_VALUE - cost))
                 last_entry, i = i, j
                 continue
         i += 1
@@ -187,16 +187,15 @@ def main():
     if not args.sweep:
         trades = backtest(mk, args.atr, args.r, args.flat)
         print(f"ATR {args.atr}, {args.r}R, close at {args.flat}: $ per 1 MNQ contract after costs")
-        print(f"{'month':8} {'trades':>6} {'wins':>5} {'net $':>8}")
-        for m, ts in sorted(by_month(trades).items()):
-            print(f"{m:8} {len(ts):6} {sum(t['usd'] > 0 for t in ts) / len(ts):5.0%} {sum(t['usd'] for t in ts):8.0f}")
-        if trades:
-            print(f"{'total':8} {len(trades):6} {sum(t['usd'] > 0 for t in trades) / len(trades):5.0%} {sum(t['usd'] for t in trades):8.0f}")
+        print("(R = result in units of the trade's own risk, before costs; it doesn't depend on position size)")
+        print(f"{'month':8} {'trades':>6} {'wins':>5} {'total R':>8} {'net $':>8}")
+        for m, ts in sorted(by_month(trades).items()) + ([("total", trades)] if trades else []):
+            print(f"{m:8} {len(ts):6} {sum(t['r'] > 0 for t in ts) / len(ts):5.0%} {sum(t['r'] for t in ts):+8.2f} {sum(t['usd'] for t in ts):8.0f}")
         if args.trades:
             print()
             for t in trades:
                 print(f"{t['time']:%Y-%m-%d %H:%M} {t['side']:5} entry {t['entry']:.2f} stop {t['stop']:.2f} "
-                      f"risk {t['risk_pts']:.2f} pts  {t['exit']:6} {t['usd']:+8.2f} $")
+                      f"risk {t['risk_pts']:.2f} pts  {t['exit']:6} {t['r']:+5.2f}R {t['usd']:+8.2f} $")
         return
 
     months = sorted({t.strftime("%Y-%m") for t in mk.T})
