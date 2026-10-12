@@ -1,7 +1,8 @@
 //@version=6
-strategy("VWAP trend pullback (MNQ 5m)", shorttitle="VWAP pullback", overlay=true, pyramiding=1, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1, margin_long=0, margin_short=0)
+strategy("VWAP trend pullback (BTC)", shorttitle="VWAP pullback", overlay=true, pyramiding=1, process_orders_on_close=true, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.055, slippage=1, margin_long=100, margin_short=100)
 
-// Trade with the intraday trend after a pullback to session VWAP (anchored at the 9:30 ET open).
+// Trade with the day's trend after a pullback to VWAP, for BTCUSDT (any 24/7 crypto pair).
+// VWAP restarts every day at 00:00 UTC, like the daily candle.
 // Long: close above VWAP, VWAP above its value 5 bars ago, 20 EMA above 50 EMA, at least one of the
 // previous 3 candles touched VWAP (low at or below it), and the signal candle is bullish.
 // Short: mirrored. Entry at the signal candle's close.
@@ -9,15 +10,13 @@ strategy("VWAP trend pullback (MNQ 5m)", shorttitle="VWAP pullback", overlay=tru
 // shorts mirrored. Target 2R. Skipped when the stop is wider than 1.5 x ATR(14), or when price was
 // more than 2 x ATR from VWAP on the candle before the pullback. A VWAP touch can only be used once:
 // after an entry, the next trade needs a touch that comes after it.
-// Entries 9:45-11:30 ET, one position at a time, any open trade closed at 15:55.
-// Size: by default each trade risks about $100. Contracts = $100 / (stop distance x $ per point),
-// rounded down and capped at 10; a setup whose stop costs more than $100 on 1 contract is skipped.
-// Switch "Position size" to "Fixed contracts" for a set number of contracts instead.
+// Size: by default each trade risks $100: quantity = $100 / stop distance, rounded down to 0.001 BTC
+// and never more than 100% of equity (1x). Or a fixed % of equity per trade.
+// Optional: trade only between set hours, close open trades at a set time, max trades per day.
+// Commission 0.055% per side is Bybit's taker fee for USDT perpetuals; change it under Properties.
 //
-// margin = 0 turns off TradingView's margin-call simulation, which doesn't fit futures margin.
 // Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
 
-tz = "America/New_York"
 stratName = "VWAP pullback"
 
 // --- inputs
@@ -35,41 +34,43 @@ bufTicks = input.int(1, "Stop buffer (ticks)", minval=0, group=gX)
 atrLen = input.int(14, "ATR length", minval=1, group=gX)
 maxStopAtr = input.float(1.5, "Skip if the stop is wider than (× ATR, 0 = off)", minval=0.0, step=0.25, group=gX)
 rr = input.float(2.0, "Take profit (× initial risk)", minval=0.1, step=0.25, group=gX)
-sizeMode = input.string("Fixed $ risk", "Position size", options=["Fixed $ risk", "Fixed contracts"], group=gX)
-riskUsd = input.float(100.0, "Risk per trade ($)", minval=1.0, step=10.0, group=gX, tooltip="Contracts = risk ÷ (stop distance × $ per point), rounded down. A setup whose stop costs more than this on 1 contract is skipped. Commission and slippage come on top.")
-maxContracts = input.int(10, "Max contracts", minval=1, group=gX)
-contracts = input.int(1, "Contracts (fixed contracts mode)", minval=1, group=gX)
+sizeMode = input.string("Fixed $ risk", "Position size", options=["Fixed $ risk", "% of equity"], group=gX)
+riskUsd = input.float(100.0, "Risk per trade ($)", minval=1.0, step=10.0, group=gX, tooltip="Quantity = risk ÷ stop distance, rounded down. Fees come on top.")
+equityPct = input.float(100.0, "Size, % of equity (the most a trade may use in $ risk mode)", minval=1.0, maxval=1000.0, group=gX, tooltip="100 = 1x. Above 100 uses leverage.")
+qtyStep = input.float(0.001, "Quantity step", minval=0.000001, step=0.001, group=gX, tooltip="Smallest order size: 0.001 BTC on Bybit and Binance.")
 
-gS = "Session (New York time)"
-winSess = input.session("0945-1130", "Take entries between", group=gS)
-useFlat = input.bool(true, "Close open trades at (HHMM)", inline="f", group=gS)
-flatAt = input.int(1555, "", minval=0, maxval=2359, inline="f", group=gS)
+gS = "Time filters (optional)"
+tz = input.string("UTC", "Times are in", options=["UTC", "Europe/Stockholm", "America/New_York"], group=gS)
+useWindow = input.bool(false, "Only enter between", inline="w", group=gS)
+winSess = input.session("1345-1530", "", inline="w", group=gS, tooltip="1345-1530 UTC is 9:45-11:30 New York in summer. Choose America/New_York above to follow New York's clock all year.")
+useFlat = input.bool(false, "Close open trades at (HHMM)", inline="f", group=gS)
+flatAt = input.int(2355, "", minval=0, maxval=2359, inline="f", group=gS)
 maxTrades = input.int(0, "Max trades per day (0 = no limit)", minval=0, group=gS)
-
-if timeframe.in_seconds() > 900
-    runtime.error("Use a 5-minute chart (anything up to 15 minutes works).")
 
 // --- helpers
 px(x) => str.tostring(x, format.mintick)
 usd(x) => "$" + str.tostring(x, "#,##0.00")
-entryText(bool buy, float sl, float tp, int qty) =>
+entryText(bool buy, float sl, float tp, float qty) =>
     risk = math.abs(close - sl)
-    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nRisk: " + usd(risk * syminfo.pointvalue * qty) + " on " + str.tostring(qty) + " contract(s)"
+    (buy ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (" + stratName + ")\nEntry: " + px(close) + "\nStop: " + px(sl) + "\nTake profit: " + px(tp) + " (" + str.tostring(math.abs(tp - close) / risk, "#.##") + "R)\nSize: " + str.tostring(qty) + " " + syminfo.basecurrency + " (" + usd(qty * close) + ")\nRisk: " + usd(risk * syminfo.pointvalue * qty)
 
-// --- session
-nyDay = dayofmonth(time, tz)
-newDay = bar_index == 0 or nyDay != nyDay[1]
-inRTH = not na(time(timeframe.period, "0930-1600", tz))
-rthStart = inRTH and (not inRTH[1] or newDay)
-inWin = not na(time(timeframe.period, winSess, tz))
-closeHHMM = hour(time_close, tz) * 100 + minute(time_close, tz)
+// --- days and time filters
+utcDay = dayofmonth(time, "UTC")
+newUtcDay = bar_index == 0 or utcDay != utcDay[1]
+localDay = dayofmonth(time, tz)
+newLocalDay = bar_index == 0 or localDay != localDay[1]
+inWin = not useWindow or not na(time(timeframe.period, winSess, tz))
+// the time exit fires on the first candle that closes at or after the set time
+closeMin = hour(time_close, tz) * 60 + minute(time_close, tz)
+flatMin = math.floor(flatAt / 100) * 60 + flatAt % 100
+late = useFlat and closeMin >= flatMin and closeMin < flatMin + timeframe.in_seconds() / 60
 
 var int tradesToday = 0
-if newDay
+if newLocalDay
     tradesToday := 0
 
 // --- indicators
-vw = ta.vwap(hlc3, rthStart)
+vw = ta.vwap(hlc3, newUtcDay)
 eF = ta.ema(close, fastLen)
 eS = ta.ema(close, slowLen)
 atr = ta.atr(atrLen)
@@ -91,19 +92,21 @@ stopS = math.round_to_mintick(ta.highest(high, pbBars + 1) + bufTicks * syminfo.
 riskOkL = maxStopAtr == 0 or close - stopL <= maxStopAtr * atr
 riskOkS = maxStopAtr == 0 or stopS - close <= maxStopAtr * atr
 
-// contracts for a stop this many points away
+// quantity for a stop this far away
 sizeFor(float riskPts) =>
-    sizeMode == "Fixed contracts" ? contracts : math.min(maxContracts, int(math.floor(riskUsd / (riskPts * syminfo.pointvalue))))
+    capQty = strategy.equity * equityPct / 100 / close
+    raw = sizeMode == "% of equity" ? capQty : math.min(riskUsd / (riskPts * syminfo.pointvalue), capQty)
+    math.floor(raw / qtyStep) * qtyStep
 qtyL = sizeFor(close - stopL)
 qtyS = sizeFor(stopS - close)
 
 isLong = strategy.position_size > 0
 isShort = strategy.position_size < 0
 isFlat = strategy.position_size == 0
-canTrade = isFlat and inWin and (maxTrades == 0 or tradesToday < maxTrades) and not (useFlat and closeHHMM >= flatAt)
+canTrade = isFlat and inWin and (maxTrades == 0 or tradesToday < maxTrades) and not late
 
-longSig = canTrade and useLong and close > vw and vw > vw[slopeBars] and eF > eS and touchL and close > open and extOk and riskOkL and qtyL >= 1
-shortSig = canTrade and useShort and close < vw and vw < vw[slopeBars] and eF < eS and touchS and close < open and extOk and riskOkS and qtyS >= 1
+longSig = canTrade and useLong and close > vw and vw > vw[slopeBars] and eF > eS and touchL and close > open and extOk and riskOkL and qtyL >= qtyStep
+shortSig = canTrade and useShort and close < vw and vw < vw[slopeBars] and eF < eS and touchS and close < open and extOk and riskOkS and qtyS >= qtyStep
 
 // --- orders
 var float slPx = na
@@ -128,13 +131,13 @@ if isLong or longSig
 if isShort or shortSig
     strategy.exit("SX", from_entry="Short", stop=slPx, limit=tpPx, comment_loss="Stop", comment_profit="TP", alert_loss="🛑 STOP " + syminfo.ticker + " short closed at " + px(slPx) + ". Cancel the take profit order.", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ". Cancel the stop order.")
 
-if useFlat and not isFlat and closeHHMM >= flatAt
+if late and not isFlat
     strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close your " + (isLong ? "long" : "short") + " now at " + px(close) + " and cancel the stop and take profit orders.")
 
 // --- plots
-plot(inRTH ? vw : na, "Session VWAP", color=color.blue, linewidth=2, style=plot.style_linebr)
+plot(vw, "Daily VWAP (00:00 UTC)", color=color.blue, linewidth=2)
 plot(eF, "Fast EMA", color=color.teal)
 plot(eS, "Slow EMA", color=color.orange)
-bgcolor(inWin ? color.new(color.blue, 95) : na, title="Entry window")
+bgcolor(useWindow and inWin ? color.new(color.blue, 95) : na, title="Entry window")
 plot(not isFlat ? slPx : na, "Stop", color=color.red, style=plot.style_linebr)
 plot(not isFlat ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)

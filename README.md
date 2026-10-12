@@ -5,7 +5,7 @@ A local backtester for trading strategies. Run one Python file, open your browse
 - **No installs.** The server uses only the Python standard library; the app is plain HTML/JS.
 - **Strategies are small JavaScript files** in `strategies/`. Edit them in the built-in editor or in your own editor.
 - **Data:** Yahoo Finance (stocks, ETFs, indices, FX, crypto), Binance (crypto), your own CSV files, or the built-in synthetic samples.
-- **Nine example strategies** to start from: VWAP band reversion, VWAP trend pullback, VWAP pullback for MNQ (the same rules and settings as `pine/vwap_trend_pullback.pine`), opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
+- **Nine example strategies** to start from: VWAP band reversion, VWAP trend pullback, VWAP pullback for BTC (the same rules and settings as `pine/vwap_trend_pullback.pine`), opening range breakout, moving average crossover, RSI(2) pullback, Bollinger breakout, Donchian breakout and MACD trend.
 
 ## Quick start
 
