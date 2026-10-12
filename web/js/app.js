@@ -15,7 +15,7 @@
   const STORE_KEY = 'vwaplab:v1';
   const DRAFT_KEY = 'vwaplab:drafts';
   const LOCAL_STRATS_KEY = 'vwaplab:strategies';
-  const DEFAULT_STRATEGY = 'vwap_band_reversion';
+  const DEFAULT_STRATEGY = 'vwap_pullback_btc';
 
   // ---------------------------------------------------------------- storage (best effort)
 
@@ -55,7 +55,7 @@
     strategyId: saved.strategyId || DEFAULT_STRATEGY,
     params: saved.params || {},
     settings: Object.assign({}, BT.engine.DEFAULT_SETTINGS, saved.settings || {}),
-    source: saved.source || 'sample',
+    source: saved.source || 'binance',
     sampleKey: saved.sampleKey || 'intraday',
     dataset: null, // as loaded
     data: null, // after the date filter
@@ -330,14 +330,31 @@
     $('chipMeta').textContent = `${d.interval} · ${f.int(d.length)} bars · ${f.date(d.time[0])} → ${f.date(d.time[d.length - 1])} · ${label}`;
   }
 
+  // resolves to true when the data loaded
   async function loadWith(fn, label) {
     setLoadStatus(`Loading ${label}…`);
     try {
       const data = await fn();
       setDataset(data);
+      return true;
     } catch (e) {
       setLoadStatus(e.message, true);
+      return false;
     }
+  }
+
+  function loadYahooNow() {
+    persist();
+    const opts = { symbol: $('yahooSymbol').value.trim().toUpperCase(), interval: $('yahooInterval').value, range: $('yahooRange').value, adjusted: $('yahooAdjusted').checked };
+    if (!opts.symbol) return Promise.resolve((setLoadStatus('Enter a ticker symbol first.', true), false));
+    return loadWith(() => BT.data.loadYahoo(opts), `${opts.symbol} from Yahoo`);
+  }
+
+  function loadBinanceNow() {
+    persist();
+    const opts = { symbol: $('binanceSymbol').value.trim().toUpperCase(), interval: $('binanceInterval').value, bars: Number($('binanceBars').value) };
+    if (!opts.symbol) return Promise.resolve((setLoadStatus('Enter a trading pair first, e.g. BTCUSDT.', true), false));
+    return loadWith(() => BT.data.loadBinance(opts), `${opts.symbol} from Binance`);
   }
 
   function loadSample(key) {
@@ -1357,19 +1374,9 @@
     if (bn.interval) $('binanceInterval').value = bn.interval;
     if (bn.bars) $('binanceBars').value = bn.bars;
 
-    $('yahooLoad').addEventListener('click', () => {
-      persist();
-      const opts = { symbol: $('yahooSymbol').value.trim().toUpperCase(), interval: $('yahooInterval').value, range: $('yahooRange').value, adjusted: $('yahooAdjusted').checked };
-      if (!opts.symbol) return setLoadStatus('Enter a ticker symbol first.', true);
-      loadWith(() => BT.data.loadYahoo(opts), `${opts.symbol} from Yahoo`);
-    });
+    $('yahooLoad').addEventListener('click', () => loadYahooNow());
     $('yahooSymbol').addEventListener('keydown', (e) => e.key === 'Enter' && $('yahooLoad').click());
-    $('binanceLoad').addEventListener('click', () => {
-      persist();
-      const opts = { symbol: $('binanceSymbol').value.trim().toUpperCase(), interval: $('binanceInterval').value, bars: Number($('binanceBars').value) };
-      if (!opts.symbol) return setLoadStatus('Enter a trading pair first, e.g. BTCUSDT.', true);
-      loadWith(() => BT.data.loadBinance(opts), `${opts.symbol} from Binance`);
-    });
+    $('binanceLoad').addEventListener('click', () => loadBinanceNow());
     $('binanceSymbol').addEventListener('keydown', (e) => e.key === 'Enter' && $('binanceLoad').click());
 
     $('csvFile').addEventListener('change', (e) => loadCsvFile(e.target.files[0]));
@@ -1516,7 +1523,9 @@
     setupOptimizer();
     const startSource = state.server ? state.source : ['sample', 'csv'].includes(state.source) ? state.source : 'sample';
     selectSource(startSource);
-    loadSample(BT.data.SAMPLES[state.sampleKey] ? state.sampleKey : 'intraday');
+    // with the server running, start on real data from the last live source; sample data only as a fallback
+    const live = startSource === 'binance' ? loadBinanceNow : startSource === 'yahoo' ? loadYahooNow : null;
+    if (!live || !(await live())) loadSample(BT.data.SAMPLES[state.sampleKey] ? state.sampleKey : 'intraday');
     const tab = (location.hash || '').replace('#', '');
     selectTab(TABS.includes(tab) ? tab : 'chart');
   }
