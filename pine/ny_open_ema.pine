@@ -1,0 +1,220 @@
+//@version=6
+strategy("NY open candle vs 12 EMA", shorttitle="NY open EMA", overlay=true, pyramiding=1, process_orders_on_close=true, max_bars_back=500, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.05, slippage=1, margin_long=0, margin_short=0)
+
+// At the New York open, wait for the first 5-minute candle (9:30-9:35 New York time) to close.
+// Close above the 12 EMA -> long, close below -> short, entered at that candle's close. One trade a day.
+// Optional filters: the move before the open, the EMA's slope, the opening candle's size, body and
+// colour, and the distance from the EMA. Stop in pips, at the opening candle's high/low, or ATR.
+// Take profit at a fixed R:R, in pips, or none. Trailing stop that starts after X R, break-even
+// after X R, and a time exit. Size by risk % of equity, risk $, or a fixed quantity.
+//
+// Works on 1- to 5-minute charts (the opening candle is built from the chart's candles).
+// Commission is 0.05% per side; set your real fee under Properties. margin = 0 turns off TradingView's
+// margin calls; "Max position size" below caps leverage instead.
+// Alerts: create one alert on this strategy with the message {{strategy.order.alert_message}}.
+
+tz = "America/New_York"
+
+// --- inputs
+gE = "Entry"
+useLong = input.bool(true, "Take longs", group=gE)
+useShort = input.bool(true, "Take shorts", group=gE)
+emaLen = input.int(12, "EMA length", minval=1, group=gE)
+ocStart = input.int(930, "Opening candle starts at (HHMM, New York)", minval=0, maxval=2359, group=gE)
+ocMinutes = input.int(5, "Opening candle length (minutes)", minval=1, maxval=120, group=gE)
+minEmaDist = input.float(0.0, "Close must be at least this far from the EMA (pips, 0 = off)", minval=0.0, group=gE)
+tradeWeekends = input.bool(false, "Also trade Saturdays and Sundays (crypto)", group=gE)
+
+gP = "Pips"
+pipMode = input.string("Auto", "Pip size", options=["Auto", "Custom"], group=gP, tooltip="Auto: forex = 10 ticks (0.0001 on EURUSD, 0.01 on USDJPY). Everything else = 1.0 price unit (1 pip = $1 on BTCUSDT, 1 point on NQ/MNQ, $1 on gold).")
+pipCustom = input.float(1.0, "Custom pip size (price units)", minval=0.0000001, group=gP)
+
+gM = "Momentum filters"
+momMode = input.string("Off", "Move before the open", options=["Off", "Must agree with the trade", "Must oppose the trade"], group=gM, tooltip="Price change from N minutes before the open to the opening candle's open. Agree = it moved up before a long (down before a short).")
+momMinutes = input.int(30, "Measured over the last (minutes before the open)", minval=1, maxval=1440, group=gM)
+momMinPips = input.float(0.0, "Minimum move (pips)", minval=0.0, group=gM)
+slopeBars = input.int(0, "EMA must slope with the trade, over (candles, 0 = off)", minval=0, maxval=200, group=gM)
+
+gC = "Opening candle filters"
+minRange = input.float(0.0, "Min candle size, high to low (pips, 0 = off)", minval=0.0, group=gC)
+maxRange = input.float(0.0, "Max candle size, high to low (pips, 0 = off)", minval=0.0, group=gC)
+minBodyPct = input.float(0.0, "Min body (% of the candle's size, 0 = off)", minval=0.0, maxval=100.0, group=gC)
+colourAgree = input.bool(false, "Candle colour must match (green for longs, red for shorts)", group=gC)
+
+gS = "Stop loss"
+stopType = input.string("Fixed pips", "Stop type", options=["Fixed pips", "Opening candle high/low", "ATR"], group=gS)
+stopPips = input.float(20.0, "Fixed stop (pips)", minval=0.0, group=gS)
+bufPips = input.float(0.0, "Buffer beyond the opening candle (pips)", minval=0.0, group=gS)
+atrLen = input.int(14, "ATR length", minval=1, group=gS)
+atrMult = input.float(1.5, "ATR stop (× ATR)", minval=0.1, step=0.1, group=gS)
+minStopPips = input.float(0.0, "Skip the trade if the stop is under (pips, 0 = off)", minval=0.0, group=gS)
+maxStopPips = input.float(0.0, "Skip the trade if the stop is over (pips, 0 = off)", minval=0.0, group=gS)
+
+gT = "Take profit"
+tpType = input.string("Fixed R:R", "Take profit", options=["Fixed R:R", "Fixed pips", "None"], group=gT, tooltip="None: the trade ends at the stop, the trailing stop or the time exit.")
+tpRR = input.float(2.0, "R:R (× the stop distance)", minval=0.1, step=0.25, group=gT)
+tpPips = input.float(40.0, "Take profit (pips)", minval=0.0, group=gT)
+
+gR = "Trailing stop and break-even"
+useTrail = input.bool(false, "Trailing stop", group=gR)
+trailStartR = input.float(1.0, "Start trailing once the trade is up (R)", minval=0.0, step=0.25, group=gR)
+trailMode = input.string("Pips", "Trail distance in", options=["Pips", "R"], group=gR)
+trailPips = input.float(10.0, "Trail distance (pips)", minval=0.0, group=gR)
+trailR = input.float(1.0, "Trail distance (R)", minval=0.0, step=0.25, group=gR)
+useBE = input.bool(false, "Move the stop to break-even", group=gR, tooltip="Checked on each candle's close; the new stop applies from the next candle.")
+beStartR = input.float(1.0, "Once the trade is up (R)", minval=0.0, step=0.25, group=gR)
+beOffsetPips = input.float(0.0, "Lock in (pips past the entry)", minval=0.0, group=gR)
+
+gX = "Time exit and size"
+useTimeExit = input.bool(true, "Close open trades at (HHMM, New York)", inline="t", group=gX)
+exitAt = input.int(1555, "", minval=0, maxval=2359, inline="t", group=gX)
+sizeMode = input.string("Risk % of equity", "Position size", options=["Risk % of equity", "Risk $", "Fixed quantity"], group=gX)
+riskPct = input.float(1.0, "Risk per trade (% of equity)", minval=0.01, step=0.25, group=gX)
+riskUsd = input.float(100.0, "Risk per trade ($)", minval=0.01, step=10.0, group=gX)
+fixedQty = input.float(1.0, "Fixed quantity", minval=0.000001, group=gX)
+qtyStep = input.float(0.0, "Round quantity down to (0 = no rounding)", minval=0.0, group=gX, tooltip="0.001 for BTC, 1 for futures contracts, 1000 for forex micro lots.")
+maxLev = input.float(10.0, "Max position size (× equity)", minval=0.1, group=gX)
+
+// --- checks and helpers
+chartMin = timeframe.in_seconds() / 60
+if chartMin > ocMinutes or ocMinutes % chartMin != 0
+    runtime.error("Use a chart timeframe that fits the opening candle: 1, 5 or " + str.tostring(ocMinutes) + " minutes.")
+
+pip = pipMode == "Custom" ? pipCustom : syminfo.type == "forex" ? syminfo.mintick * 10 : 1.0
+toMin(int hhmm) => math.floor(hhmm / 100) * 60 + hhmm % 100
+px(x) => str.tostring(x, format.mintick)
+pips(x) => str.tostring(x / pip, "#.#")
+
+// --- the opening candle, built from the chart's candles
+barOpenMin = hour(time, tz) * 60 + minute(time, tz)
+barCloseMin = hour(time_close, tz) * 60 + minute(time_close, tz)
+ocStartMin = toMin(ocStart)
+ocEndMin = ocStartMin + ocMinutes
+inOC = barOpenMin >= ocStartMin and barOpenMin < ocEndMin
+nyDay = dayofmonth(time, tz)
+newDay = bar_index == 0 or nyDay != nyDay[1]
+dow = dayofweek(time, tz)
+dayOk = tradeWeekends or (dow != dayofweek.saturday and dow != dayofweek.sunday)
+
+var float ocO = na
+var float ocH = na
+var float ocL = na
+var int ocFirstBar = na
+var bool tradedToday = false
+if newDay
+    ocO := na
+    tradedToday := false
+if inOC
+    if barOpenMin == ocStartMin or na(ocO)
+        ocO := open
+        ocH := high
+        ocL := low
+        ocFirstBar := bar_index
+    else
+        ocH := math.max(ocH, high)
+        ocL := math.min(ocL, low)
+ocDone = inOC and barCloseMin == ocEndMin and not na(ocO)
+
+// --- indicators
+ema = ta.ema(close, emaLen)
+atr = ta.atr(atrLen)
+
+// --- filters (dir = 1 long, -1 short)
+filtersOk(int dir) =>
+    rangeP = (ocH - ocL) / pip
+    bodyPct = ocH > ocL ? math.abs(close - ocO) / (ocH - ocL) * 100 : 0.0
+    candleOk = (minRange == 0 or rangeP >= minRange) and (maxRange == 0 or rangeP <= maxRange) and (minBodyPct == 0 or bodyPct >= minBodyPct) and (not colourAgree or (dir > 0 ? close > ocO : close < ocO))
+    momBars = math.round(momMinutes / chartMin)
+    preMove = (ocO - close[bar_index - ocFirstBar + momBars]) / pip * dir
+    momOk = momMode == "Off" or (momMode == "Must agree with the trade" ? preMove > 0 and preMove >= momMinPips : preMove < 0 and -preMove >= momMinPips)
+    slopeOk = slopeBars == 0 or (dir > 0 ? ema > ema[slopeBars] : ema < ema[slopeBars])
+    distOk = minEmaDist == 0 or math.abs(close - ema) / pip >= minEmaDist
+    candleOk and momOk and slopeOk and distOk
+
+// --- stop, target and size for a trade entered at this close
+stopFor(int dir) =>
+    float s = na
+    if stopType == "Fixed pips"
+        s := close - dir * stopPips * pip
+    else if stopType == "Opening candle high/low"
+        s := dir > 0 ? ocL - bufPips * pip : ocH + bufPips * pip
+    else
+        s := close - dir * atrMult * atr
+    math.round_to_mintick(s)
+
+targetFor(int dir, float dist) =>
+    tpType == "Fixed R:R" ? math.round_to_mintick(close + dir * tpRR * dist) : tpType == "Fixed pips" ? math.round_to_mintick(close + dir * tpPips * pip) : na
+
+qtyFor(float dist) =>
+    perUnit = dist * syminfo.pointvalue
+    raw = sizeMode == "Fixed quantity" ? fixedQty : sizeMode == "Risk $" ? riskUsd / perUnit : strategy.equity * riskPct / 100 / perUnit
+    cap = strategy.equity * maxLev / (close * syminfo.pointvalue)
+    q = sizeMode == "Fixed quantity" ? raw : math.min(raw, cap)
+    qtyStep > 0 ? math.floor(q / qtyStep) * qtyStep : q
+
+stopOk(float dist) =>
+    dist > 0 and (minStopPips == 0 or dist / pip >= minStopPips) and (maxStopPips == 0 or dist / pip <= maxStopPips)
+
+// --- signals
+isFlat = strategy.position_size == 0
+canTrade = ocDone and dayOk and isFlat and not tradedToday
+stopL = stopFor(1)
+stopS = stopFor(-1)
+distL = close - stopL
+distS = stopS - close
+qtyL = qtyFor(distL)
+qtyS = qtyFor(distS)
+longSig = canTrade and useLong and close > ema and filtersOk(1) and stopOk(distL) and qtyL > 0
+shortSig = canTrade and useShort and close < ema and filtersOk(-1) and stopOk(distS) and qtyS > 0
+
+// --- orders
+var float entryPx = na
+var float riskDist = na
+var float curStop = na
+var float tpPx = na
+var float trailPts = na
+var float trailOff = na
+var bool beDone = false
+var int tradeDir = 0
+
+entryText(int dir, float qty) =>
+    (dir > 0 ? "🟢 LONG " : "🔻 SHORT ") + syminfo.ticker + " (NY open vs " + str.tostring(emaLen) + " EMA)\nEntry: " + px(close) + "\nStop: " + px(curStop) + " (" + pips(riskDist) + " pips)\nTake profit: " + (na(tpPx) ? "none" : px(tpPx) + " (" + pips(math.abs(tpPx - close)) + " pips)") + (useTrail ? "\nTrailing stop starts at +" + str.tostring(trailStartR) + "R" : "") + (useBE ? "\nBreak-even at +" + str.tostring(beStartR) + "R" : "") + "\nSize: " + str.tostring(qty) + "\nRisk: $" + str.tostring(riskDist * syminfo.pointvalue * qty, "#,##0.00")
+
+if longSig or shortSig
+    tradeDir := longSig ? 1 : -1
+    entryPx := close
+    curStop := longSig ? stopL : stopS
+    riskDist := longSig ? distL : distS
+    tpPx := targetFor(tradeDir, riskDist)
+    trailPts := useTrail ? trailStartR * riskDist / syminfo.mintick : na
+    trailOff := useTrail ? (trailMode == "Pips" ? trailPips * pip : trailR * riskDist) / syminfo.mintick : na
+    beDone := false
+    tradedToday := true
+    q = longSig ? qtyL : qtyS
+    strategy.entry(longSig ? "Long" : "Short", longSig ? strategy.long : strategy.short, qty=q, alert_message=entryText(tradeDir, q))
+
+// break-even: once the best price since entry is beStartR in profit, move the stop
+if useBE and not beDone and strategy.position_size != 0 and not (longSig or shortSig)
+    best = tradeDir > 0 ? high : low
+    if tradeDir * (best - entryPx) >= beStartR * riskDist
+        newStop = math.round_to_mintick(entryPx + tradeDir * beOffsetPips * pip)
+        if tradeDir * (newStop - curStop) > 0
+            curStop := newStop
+        beDone := true
+        alert("🔒 BREAK-EVEN " + syminfo.ticker + ": move your stop to " + px(curStop) + ".", alert.freq_once_per_bar_close)
+
+// one exit order with the stop, the target and the trailing stop; placed on the entry candle too
+if strategy.position_size > 0 or longSig
+    strategy.exit("LX", from_entry="Long", stop=curStop, limit=tpPx, trail_points=trailPts, trail_offset=trailOff, comment_loss="Stop", comment_profit="TP", comment_trailing="Trail", alert_loss="🛑 STOP " + syminfo.ticker + " long closed near " + px(curStop) + ".", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " long closed at " + px(tpPx) + ".", alert_trailing="📉 TRAILING STOP " + syminfo.ticker + " long closed.")
+if strategy.position_size < 0 or shortSig
+    strategy.exit("SX", from_entry="Short", stop=curStop, limit=tpPx, trail_points=trailPts, trail_offset=trailOff, comment_loss="Stop", comment_profit="TP", comment_trailing="Trail", alert_loss="🛑 STOP " + syminfo.ticker + " short closed near " + px(curStop) + ".", alert_profit="🎯 TAKE PROFIT " + syminfo.ticker + " short closed at " + px(tpPx) + ".", alert_trailing="📈 TRAILING STOP " + syminfo.ticker + " short closed.")
+
+if useTimeExit and strategy.position_size != 0 and barCloseMin >= toMin(exitAt) and not (longSig or shortSig)
+    strategy.close_all(comment="Time exit", alert_message="⏰ TIME EXIT " + syminfo.ticker + ": close the trade now at " + px(close) + " and cancel its orders.")
+
+// --- plots
+plot(ema, "EMA", color=color.orange, linewidth=2)
+bgcolor(inOC ? color.new(color.blue, 85) : na, title="Opening candle")
+plot(strategy.position_size != 0 ? curStop : na, "Stop", color=color.red, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tpPx : na, "Take profit", color=color.green, style=plot.style_linebr)
+plotshape(ocDone and dayOk and not longSig and not shortSig and isFlat and not tradedToday, "No trade (filtered out)", shape.xcross, location.abovebar, color.new(color.gray, 30), size=size.tiny)
