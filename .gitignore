@@ -5,3 +5,4 @@ __pycache__/
 node_modules/
 strategies/.tmp-*
 research/key_levels/bars.json
+research/gex/gex_log.csv
