@@ -22,6 +22,7 @@ useShort = input.bool(true, "Take shorts", group=gE)
 emaLen = input.int(12, "EMA length", minval=1, group=gE)
 ocStart = input.int(930, "Opening candle starts at (HHMM, New York)", minval=0, maxval=2359, group=gE)
 ocMinutes = input.int(5, "Opening candle length (minutes)", minval=1, maxval=120, group=gE)
+emaRule = input.string("Close beyond the EMA", "Opening candle vs the EMA", options=["Close beyond the EMA", "Whole body beyond the EMA", "Whole candle beyond the EMA"], group=gE, tooltip="Long: the close / the open and close / the whole candle including its low must be above the EMA. Shorts mirrored.")
 minEmaDist = input.float(0.0, "Close must be at least this far from the EMA (pips, 0 = off)", minval=0.0, group=gE)
 tradeWeekends = input.bool(false, "Also trade Saturdays and Sundays (crypto)", group=gE)
 
@@ -164,8 +165,11 @@ distL = close - stopL
 distS = stopS - close
 qtyL = qtyFor(distL)
 qtyS = qtyFor(distS)
-longSig = canTrade and useLong and close > ema and filtersOk(1) and stopOk(distL) and qtyL > 0
-shortSig = canTrade and useShort and close < ema and filtersOk(-1) and stopOk(distS) and qtyS > 0
+// which part of the opening candle has to be past the EMA
+aboveEma = emaRule == "Close beyond the EMA" ? close > ema : emaRule == "Whole body beyond the EMA" ? math.min(ocO, close) > ema : ocL > ema
+belowEma = emaRule == "Close beyond the EMA" ? close < ema : emaRule == "Whole body beyond the EMA" ? math.max(ocO, close) < ema : ocH < ema
+longSig = canTrade and useLong and aboveEma and filtersOk(1) and stopOk(distL) and qtyL > 0
+shortSig = canTrade and useShort and belowEma and filtersOk(-1) and stopOk(distS) and qtyS > 0
 
 // --- orders
 var float entryPx = na
