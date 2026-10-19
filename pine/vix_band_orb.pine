@@ -9,7 +9,9 @@
 // Trades are held (overnight if needed) until the target or stop is hit, unless the cutoff-close setting is ticked.
 // Expected move = prev 16:00 close x prev vol index / 100 / sqrt(252). If the vol index has no data, daily ATR(14) is used.
 // Use on SPY with a 5m chart (any chart up to the opening-range length works). Results are in the Strategy Tester tab.
-strategy("VIX Band ORB", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.005, slippage=1, process_orders_on_close=true, max_labels_count=500)
+// margin = 0 switches off TradingView's margin check, which otherwise rejects a full-size futures contract
+// (one NQ is ~$600k) on a small account. Size trades with the "Position size" setting instead.
+strategy("VIX Band ORB", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.005, slippage=1, process_orders_on_close=true, max_labels_count=500, margin_long=0, margin_short=0)
 
 volSym     = input.symbol("CBOE:VIX1D", "Volatility index", tooltip="CBOE:VIX1D (1-day VIX) tested best. Falls back to TVC:VIX, then to daily ATR, if it has no data.")
 orMins     = input.int(15, "Opening range (minutes)", options=[5, 15, 30, 60])
@@ -23,6 +25,9 @@ maxLosses  = input.int(2, "Max losing trades per day", minval=1)
 stopOnWin  = input.bool(false, "Stop for the day after a winning trade")
 closeEod   = input.bool(false, "Close open trades at the cutoff time", tooltip="Off = hold until target or stop, overnight if needed")
 cutoff     = input.int(1555, "Cutoff time (HHMM, New York)", minval=930, maxval=1600, tooltip="No new entries after this time. Open trades are closed here only if the box above is ticked.")
+sizeMode   = input.string("All equity (no leverage)", "Position size", options=["All equity (no leverage)", "Fixed quantity", "Risk % of equity"], tooltip="All equity: as many shares/contracts as the account pays for in full, at least 1. Fixed: always the quantity below. Risk %: sized so hitting the stop loses this % of equity, at least 1.")
+fixedQty   = input.float(1, "Fixed quantity (contracts or shares)", minval=0.0001)
+riskPct    = input.float(1, "Risk per trade (% of equity)", minval=0.01, step=0.25)
 showTable  = input.bool(true, "Show status table")
 
 tz = "America/New_York"
@@ -122,15 +127,18 @@ hitDn = dLow <= tgtDn
 
 rangeSet = not na(orH) and not na(orL) and not na(sigma) and closeMin >= orEnd
 canTrade = rangeSet and not eod and not done and strategy.position_size == 0
-// Size: all equity, but never less than 1 share or contract (futures like ES would otherwise round to 0)
-qty = math.max(1, math.floor(strategy.equity / (close * syminfo.pointvalue)))
+// Size: never less than 1 share or contract (futures would otherwise round to 0)
+qtyFor(float entry, float stop) =>
+    sizeMode == "Fixed quantity" ? fixedQty : sizeMode == "Risk % of equity" ? math.max(1, math.floor(strategy.equity * riskPct / 100 / (math.abs(entry - stop) * syminfo.pointvalue))) : math.max(1, math.floor(strategy.equity / (entry * syminfo.pointvalue)))
+qtyL = qtyFor(orH, pendStopL)
+qtyS = qtyFor(orL, pendStopS)
 
 if canTrade and allowLong and tgtUp > orH and not hitUp
-    strategy.entry("Long", strategy.long, qty=qty, stop=orH, oca_name="orb", oca_type=strategy.oca.cancel)
+    strategy.entry("Long", strategy.long, qty=qtyL, stop=orH, oca_name="orb", oca_type=strategy.oca.cancel)
 else
     strategy.cancel("Long")
 if canTrade and allowShort and tgtDn < orL and not hitDn
-    strategy.entry("Short", strategy.short, qty=qty, stop=orL, oca_name="orb", oca_type=strategy.oca.cancel)
+    strategy.entry("Short", strategy.short, qty=qtyS, stop=orL, oca_name="orb", oca_type=strategy.oca.cancel)
 else
     strategy.cancel("Short")
 
