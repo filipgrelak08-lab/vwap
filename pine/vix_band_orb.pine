@@ -1,0 +1,202 @@
+//@version=6
+// VIX Band ORB: opening-range breakout that targets the VIX expected-move band in the breakout direction.
+// Opening range = 9:30 to 9:45 New York time by default. Long on a break above it, target = 9:30 open + k x expected move.
+// Short is the mirror. Stop = the other end of the opening range (range low for longs, range high for shorts).
+// Optional: a stop mode that pulls the stop closer when the fixed reward:risk or max % stop is tighter, or a stop
+// at the middle of the range. If a breakout is stopped out it takes the next one,
+// up to 2 losing trades per day. Once price has touched the predicted high, no more longs that day
+// (shorts still allowed on a break below the range low), and the same in reverse for the predicted low.
+// Trades are held (overnight if needed) until the target or stop is hit, unless the cutoff-close setting is ticked.
+// Expected move = prev 16:00 close x prev vol index / 100 / sqrt(252). If the vol index has no data, daily ATR(14) is used.
+// Use on SPY with a 5m chart (any chart up to the opening-range length works). Results are in the Strategy Tester tab.
+strategy("VIX Band ORB", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.005, slippage=1, process_orders_on_close=true, max_labels_count=500)
+
+volSym     = input.symbol("CBOE:VIX1D", "Volatility index", tooltip="CBOE:VIX1D (1-day VIX) tested best. Falls back to TVC:VIX, then to daily ATR, if it has no data.")
+orMins     = input.int(15, "Opening range (minutes)", options=[5, 15, 30, 60])
+k          = input.float(0.75, "Target (expected moves from the open)", step=0.25)
+stopMode   = input.string("Other end of range", "Stop", options=["Other end of range", "Other end of range, tightened by R:R / max %", "Middle of range"], tooltip="Other end of range: longs stop at the range low, shorts at the range high, nothing else changes it. Tightened: the R:R and max % settings below can pull it closer. Middle of range: stop halfway through the range.")
+rr         = input.float(2, "Fixed reward:risk (0 = off)", minval=0, step=0.5, tooltip="Only used with the 'tightened' stop mode. Places the stop so the target is this many times the risk.")
+maxPct     = input.float(0.5, "Max stop distance, % of price (0 = off)", minval=0, step=0.1, tooltip="Only used with the 'tightened' stop mode. Stop is never further than this % from the entry.")
+allowLong  = input.bool(true, "Take longs")
+allowShort = input.bool(true, "Take shorts")
+maxLosses  = input.int(2, "Max losing trades per day", minval=1)
+stopOnWin  = input.bool(false, "Stop for the day after a winning trade")
+closeEod   = input.bool(false, "Close open trades at the cutoff time", tooltip="Off = hold until target or stop, overnight if needed")
+cutoff     = input.int(1555, "Cutoff time (HHMM, New York)", minval=930, maxval=1600, tooltip="No new entries after this time. Open trades are closed here only if the box above is ticked.")
+showTable  = input.bool(true, "Show status table")
+
+tz = "America/New_York"
+
+// The opening range needs intraday bars no bigger than the range itself
+if timeframe.in_seconds() > orMins * 60
+    runtime.error("Switch the chart to " + str.tostring(orMins) + " minutes or lower (5m works best). The opening range needs intraday bars.")
+
+// Yesterday's vol index close, fixed for the whole day. Missing symbols return na instead of stopping the script.
+volMain = request.security(volSym, "D", close[1], lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+volBack = request.security("TVC:VIX", "D", close[1], lookahead=barmerge.lookahead_on, ignore_invalid_symbol=true)
+atrPrev = request.security(syminfo.tickerid, "D", ta.atr(14)[1], lookahead=barmerge.lookahead_on)
+volPrev = na(volMain) ? volBack : volMain
+volName = na(volMain) ? (na(volBack) ? "daily ATR" : "TVC:VIX") : volSym
+
+// New York clock for each bar
+openMin  = hour(time, tz) * 60 + minute(time, tz)
+closeMin = hour(time_close, tz) * 60 + minute(time_close, tz)
+orStart  = 9 * 60 + 30
+orEnd    = orStart + orMins
+inOR     = openMin < orEnd and closeMin > orStart and closeMin <= orEnd + 60
+rthStart = inOR and not inOR[1]
+eod      = closeMin >= math.floor(cutoff / 100) * 60 + cutoff % 100 or closeMin < orStart
+
+var float rthClose  = na
+var float prevClose = na
+var float dOpen     = na
+var float orH       = na
+var float orL       = na
+var bool  done      = false
+var int   nClosed   = 0
+var int   losses    = 0
+var bool  won       = false
+var bool  announced = false
+var float dHigh     = na
+var float dLow      = na
+var float tStop     = na
+var float tTgt      = na
+
+// Count today's wins and losses (checked before the daily reset so yesterday's exit doesn't carry over)
+if strategy.closedtrades > nClosed
+    for i = nClosed to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) < 0
+            losses += 1
+        else
+            won := true
+nClosed := strategy.closedtrades
+done := losses >= maxLosses or (stopOnWin and won)
+
+if rthStart
+    prevClose := rthClose
+    dOpen     := open
+    orH       := high
+    orL       := low
+    losses    := 0
+    won       := false
+    done      := false
+    announced := false
+    dHigh     := high
+    dLow      := low
+else if inOR
+    orH := math.max(orH, high)
+    orL := math.min(orL, low)
+if not rthStart and not eod
+    dHigh := math.max(dHigh, high)
+    dLow  := math.min(dLow, low)
+if openMin < 16 * 60 and closeMin >= 16 * 60
+    rthClose := close
+
+basis = na(prevClose) ? dOpen : prevClose
+sigma = na(volPrev) ? atrPrev : basis * volPrev / 100 / math.sqrt(252)
+tgtUp = dOpen + k * sigma
+tgtDn = dOpen - k * sigma
+stopL = stopMode == "Middle of range" ? (orH + orL) / 2 : orL
+stopS = stopMode == "Middle of range" ? (orH + orL) / 2 : orH
+tighten = stopMode == "Other end of range, tightened by R:R / max %"
+// Range stop; in the 'tightened' mode the reward:risk and max % stops can pull it closer
+longStop(float entry, float tgt) =>
+    s = stopL
+    if tighten and rr > 0
+        s := math.max(s, entry - (tgt - entry) / rr)
+    if tighten and maxPct > 0
+        s := math.max(s, entry * (1 - maxPct / 100))
+    s
+shortStop(float entry, float tgt) =>
+    s = stopS
+    if tighten and rr > 0
+        s := math.min(s, entry + (entry - tgt) / rr)
+    if tighten and maxPct > 0
+        s := math.min(s, entry * (1 + maxPct / 100))
+    s
+pendStopL = longStop(orH, tgtUp)
+pendStopS = shortStop(orL, tgtDn)
+// Once a predicted high/low has been touched today, no more trades in that direction
+hitUp = dHigh >= tgtUp
+hitDn = dLow <= tgtDn
+
+rangeSet = not na(orH) and not na(orL) and not na(sigma) and closeMin >= orEnd
+canTrade = rangeSet and not eod and not done and strategy.position_size == 0
+// Size: all equity, but never less than 1 share or contract (futures like ES would otherwise round to 0)
+qty = math.max(1, math.floor(strategy.equity / (close * syminfo.pointvalue)))
+
+if canTrade and allowLong and tgtUp > orH and not hitUp
+    strategy.entry("Long", strategy.long, qty=qty, stop=orH, oca_name="orb", oca_type=strategy.oca.cancel)
+else
+    strategy.cancel("Long")
+if canTrade and allowShort and tgtDn < orL and not hitDn
+    strategy.entry("Short", strategy.short, qty=qty, stop=orL, oca_name="orb", oca_type=strategy.oca.cancel)
+else
+    strategy.cancel("Short")
+
+// Freeze an open trade's stop and target at entry, so a trade held overnight keeps its own levels
+newLong  = strategy.position_size > 0 and nz(strategy.position_size[1]) <= 0
+newShort = strategy.position_size < 0 and nz(strategy.position_size[1]) >= 0
+exited   = strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+if newLong
+    tTgt  := tgtUp
+    tStop := longStop(strategy.position_avg_price, tgtUp)
+if newShort
+    tTgt  := tgtDn
+    tStop := shortStop(strategy.position_avg_price, tgtDn)
+
+strategy.exit("Long exit", from_entry="Long", limit=strategy.position_size > 0 ? tTgt : tgtUp, stop=strategy.position_size > 0 ? tStop : pendStopL)
+strategy.exit("Short exit", from_entry="Short", limit=strategy.position_size < 0 ? tTgt : tgtDn, stop=strategy.position_size < 0 ? tStop : pendStopS)
+if eod and closeEod
+    strategy.close_all(comment="End of day")
+
+// Drawing
+f(float x) => rthStart ? float(na) : x
+plot(rangeSet and not eod ? f(orH) : float(na), "Range high", color=color.new(color.blue, 0), style=plot.style_linebr)
+plot(rangeSet and not eod ? f(orL) : float(na), "Range low", color=color.new(color.blue, 0), style=plot.style_linebr)
+plot(eod ? float(na) : f(tgtUp), "Long target", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(eod ? float(na) : f(tgtDn), "Short target", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+bgcolor(inOR ? color.new(color.blue, 90) : color(na), title="Opening range")
+// Live stop while in a trade
+plot(strategy.position_size != 0 ? tStop : float(na), "Stop", color=color.new(color.orange, 0), linewidth=2, style=plot.style_linebr)
+
+// Signals: once the opening range is set, label the day's long and short triggers
+longOk  = allowLong and tgtUp > orH
+shortOk = allowShort and tgtDn < orL
+longTxt  = longOk ? "LONG if price breaks above " + str.tostring(orH, format.mintick) + "\nTarget " + str.tostring(tgtUp, format.mintick) + "  Stop " + str.tostring(pendStopL, format.mintick) : "No long today"
+shortTxt = shortOk ? "SHORT if price breaks below " + str.tostring(orL, format.mintick) + "\nTarget " + str.tostring(tgtDn, format.mintick) + "  Stop " + str.tostring(pendStopS, format.mintick) : "No short today"
+if rangeSet and not eod and not announced
+    announced := true
+    label.new(bar_index, orH, longTxt, color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
+    label.new(bar_index, orL, shortTxt, color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
+    alert("VIX ORB setup: " + longTxt + " | " + shortTxt, alert.freq_once_per_bar_close)
+
+// Mark fills and exits
+plotshape(newLong, "Long entry", shape.triangleup, location.belowbar, color.lime, text="LONG", textcolor=color.lime, size=size.small)
+plotshape(newShort, "Short entry", shape.triangledown, location.abovebar, color.red, text="SHORT", textcolor=color.red, size=size.small)
+plotshape(exited, "Exit", shape.xcross, location.abovebar, color.gray, text="EXIT", textcolor=color.gray, size=size.tiny)
+if newLong
+    alert("VIX ORB: LONG entered. Target " + str.tostring(tTgt, format.mintick) + ", stop " + str.tostring(tStop, format.mintick), alert.freq_once_per_bar_close)
+if newShort
+    alert("VIX ORB: SHORT entered. Target " + str.tostring(tTgt, format.mintick) + ", stop " + str.tostring(tStop, format.mintick), alert.freq_once_per_bar_close)
+if exited
+    alert("VIX ORB: position closed", alert.freq_once_per_bar_close)
+
+// Status, so it is clear why there is or isn't a trade
+status = na(sigma) ? "No volatility data" : strategy.position_size > 0 ? "In a long (target " + str.tostring(tTgt, format.mintick) + ")" : strategy.position_size < 0 ? "In a short (target " + str.tostring(tTgt, format.mintick) + ")" : done ? "Done for today (" + str.tostring(losses) + " losses)" : eod ? "Market closed" : inOR or not rangeSet ? "Building opening range" : "Waiting for breakout"
+var table t = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 20), border_width=1)
+if showTable and barstate.islast
+    table.cell(t, 0, 0, "Volatility source", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 0, volName + (na(volPrev) ? "" : "  " + str.tostring(volPrev, "#.##")), text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 1, "Expected move", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, na(sigma) ? "-" : "+/-" + str.tostring(sigma, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 2, "Opening range", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, na(orL) ? "-" : str.tostring(orL, format.mintick) + " to " + str.tostring(orH, format.mintick), text_color=color.aqua, text_size=size.small)
+    table.cell(t, 0, 3, "Targets", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, na(sigma) ? "-" : str.tostring(tgtDn, format.mintick) + " / " + str.tostring(tgtUp, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(t, 0, 4, "Status", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, status, text_color=color.yellow, text_size=size.small)
+    table.cell(t, 0, 5, "Long trigger", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 5, not rangeSet ? "after the range" : hitUp ? "off, predicted high reached" : longOk ? "above " + str.tostring(orH, format.mintick) : "none today", text_color=color.lime, text_size=size.small)
+    table.cell(t, 0, 6, "Short trigger", text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 6, not rangeSet ? "after the range" : hitDn ? "off, predicted low reached" : shortOk ? "below " + str.tostring(orL, format.mintick) : "none today", text_color=color.red, text_size=size.small)
