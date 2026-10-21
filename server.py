@@ -540,6 +540,106 @@ def delete_strategy(sid):
     target.unlink()
 
 
+# --------------------------------------------------------------------------- candles (volume panel)
+
+# Trader.dev has no candle call, so the volume panel reads public klines.
+# Bybit first: Trader.dev tests Bybit USDT perpetuals, so its volume is the
+# market the backtest ran on. Binance's public data mirror is the fallback
+# where Bybit is blocked; its volume is spot and is labelled as such.
+BYBIT_KLINE_URL = "https://api.bybit.com/v5/market/kline"
+BINANCE_KLINE_URL = "https://data-api.binance.vision/api/v3/klines"
+# interval in minutes -> (Bybit name, Binance name)
+KLINE_INTERVALS = {
+    1: ("1", "1m"), 3: ("3", "3m"), 5: ("5", "5m"), 15: ("15", "15m"), 30: ("30", "30m"),
+    60: ("60", "1h"), 120: ("120", "2h"), 240: ("240", "4h"), 360: ("360", "6h"), 720: ("720", "12h"),
+    1440: ("D", "1d"), 10080: ("W", "1w"),
+}
+KLINE_PAGE = 1000
+KLINE_MAX_PAGES = 12
+
+
+def candle_symbol(raw):
+    """BYBIT:BTCUSDT.P -> BTCUSDT"""
+    sym = str(raw or "").split(":")[-1].upper()
+    sym = re.sub(r"\.P$|PERP$", "", sym)
+    sym = re.sub(r"[^A-Z0-9]", "", sym)
+    if not sym or len(sym) > 30:
+        raise ApiError("Which symbol? Pass one like BTCUSDT.")
+    return sym
+
+
+def _get_json(url, params, timeout=20):
+    req = urllib.request.Request(
+        f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": f"BacktestingTool/{VERSION}"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def _bybit_klines(symbol, minutes, start, end):
+    rows = {}
+    cursor = end
+    for _ in range(KLINE_MAX_PAGES):
+        body = _get_json(BYBIT_KLINE_URL, {
+            "category": "linear", "symbol": symbol, "interval": KLINE_INTERVALS[minutes][0],
+            "start": start, "end": cursor, "limit": KLINE_PAGE,
+        })
+        if not isinstance(body, dict) or body.get("retCode") != 0:
+            raise ValueError((body or {}).get("retMsg") or "unexpected answer")
+        page = (body.get("result") or {}).get("list") or []  # newest first
+        for r in page:
+            rows[int(r[0])] = [int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])]
+        oldest = min((int(r[0]) for r in page), default=start)
+        if len(page) < KLINE_PAGE or oldest <= start:
+            break
+        cursor = oldest - 1
+    return [rows[k] for k in sorted(rows)]
+
+
+def _binance_klines(symbol, minutes, start, end):
+    rows = []
+    cursor = start
+    for _ in range(KLINE_MAX_PAGES):
+        page = _get_json(BINANCE_KLINE_URL, {
+            "symbol": symbol, "interval": KLINE_INTERVALS[minutes][1],
+            "startTime": cursor, "endTime": end, "limit": KLINE_PAGE,
+        })
+        if not isinstance(page, list):
+            raise ValueError((page or {}).get("msg") or "unexpected answer")
+        rows += [[int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])] for r in page]
+        if len(page) < KLINE_PAGE:
+            break
+        cursor = int(page[-1][0]) + 1
+    return rows
+
+
+def fetch_candles(query):
+    symbol = candle_symbol(query.get("symbol"))
+    try:
+        minutes = int(query.get("interval") or 60)
+        start = int(float(query.get("from")))
+        end = int(float(query.get("to")))
+    except (TypeError, ValueError):
+        raise ApiError("Pass interval (minutes), from and to (ms).")
+    if minutes not in KLINE_INTERVALS:
+        raise ApiError(f"Interval must be one of {sorted(KLINE_INTERVALS)} minutes.")
+    if end <= start:
+        raise ApiError("The end of the range must be after its start.")
+    # never more than KLINE_MAX_PAGES pages: keep the latest part of a long range
+    start = max(start, end - minutes * 60000 * KLINE_PAGE * KLINE_MAX_PAGES)
+    errors = []
+    for source, fetch in (("Bybit perpetual", _bybit_klines), ("Binance spot", _binance_klines)):
+        try:
+            bars = fetch(symbol, minutes, start, end)
+        except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError, TypeError) as e:
+            errors.append(f"{source}: {getattr(e, 'reason', None) or e}")
+            continue
+        if bars:
+            return {"symbol": symbol, "interval": minutes, "source": source, "bars": bars}
+        errors.append(f"{source}: no candles for {symbol}")
+    raise ApiError("Could not load volume. " + "; ".join(errors), 502)
+
+
 # --------------------------------------------------------------------------- request handler
 
 
@@ -627,6 +727,9 @@ class Handler(SimpleHTTPRequestHandler):
             if len(parts) == 2 and method == "DELETE":
                 delete_strategy(parts[1])
                 return self._send_json({"ok": True})
+
+        if method == "GET" and route == "candles":
+            return self._send_json(fetch_candles(query))
 
         if route == "traderdev":
             sub = parts[1] if len(parts) > 1 else ""

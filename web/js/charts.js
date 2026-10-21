@@ -2,8 +2,9 @@
  * Chart rendering on top of TradingView Lightweight Charts (v4).
  *
  * The data comes from Trader.dev: a per-bar equity curve with the drawdown
- * at each bar. Two charts are stacked and share one bar range, so zooming,
- * panning and the crosshair stay in sync.
+ * at each bar, plus the market's volume bucketed onto the same bars. Three
+ * charts are stacked and share one bar range, so zooming, panning and the
+ * crosshair stay in sync.
  *
  * Candles and indicator overlays are not drawn here. Trader.dev runs the
  * backtest and its own report page has the price chart with every fill on
@@ -19,6 +20,8 @@
   const charts = {};
   const main = {};
   let points = []; // { time (s), equity, drawdown }
+  let volume = []; // per point: { value, up } or null, aligned with points
+  let volumeNote = '';
   let timeIndex = new Map();
   let syncing = false;
   let capital = 0;
@@ -43,6 +46,7 @@
   const pad = (s) => String(s).padStart(PAD);
   const fmtMoney = (v) => pad(BT.fmt.money(v));
   const fmtPct = (v) => pad(`${v.toFixed(1)}%`);
+  const fmtVol = (v) => pad(BT.fmt.compact(v));
 
   function options(t, o) {
     return {
@@ -69,7 +73,8 @@
   function create() {
     const t = theme();
     charts.equity = LW().createChart(el.equity, options(t, { logo: true, formatter: fmtMoney, margins: { top: 0.14, bottom: 0.06 } }));
-    charts.dd = LW().createChart(el.dd, options(t, { timeAxis: true, formatter: fmtPct, margins: { top: 0.18, bottom: 0.02 } }));
+    charts.dd = LW().createChart(el.dd, options(t, { formatter: fmtPct, margins: { top: 0.18, bottom: 0.02 } }));
+    charts.vol = LW().createChart(el.vol, options(t, { timeAxis: true, formatter: fmtVol, margins: { top: 0.2, bottom: 0 } }));
 
     main.equity = charts.equity.addAreaSeries({
       lineColor: t.accent, lineWidth: 2, topColor: rgba(t.accent, 0.16), bottomColor: rgba(t.accent, 0.01),
@@ -79,6 +84,7 @@
       lineColor: t.down, lineWidth: 1.5, topColor: rgba(t.down, 0.04), bottomColor: rgba(t.down, 0.22),
       priceLineVisible: false, lastValueVisible: false,
     });
+    main.vol = charts.vol.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, base: 0 });
 
     for (const key of Object.keys(charts)) {
       charts[key].timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -103,6 +109,8 @@
     el.dd = document.getElementById(ids.dd);
     el.equityLegend = document.getElementById(ids.equityLegend);
     el.ddLegend = document.getElementById(ids.ddLegend);
+    el.vol = document.getElementById(ids.vol);
+    el.volLegend = document.getElementById(ids.volLegend);
     if (!LW()) throw new Error('The chart library failed to load.');
     create();
   }
@@ -120,7 +128,52 @@
     timeIndex = new Map(points.map((p, i) => [p.time, i]));
     main.equity.setData(points.map((p) => ({ time: p.time, value: p.equity })));
     main.dd.setData(points.map((p) => ({ time: p.time, value: p.drawdown })));
+    volume = [];
+    volumeNote = 'Loading volume…';
+    main.vol.setData([]);
     fitAll();
+    updateLegends(points.length - 1);
+  }
+
+  /**
+   * Volume for the bars on screen. candles: [[openMs, o, h, l, c, v], ...].
+   * Each equity point gets the candles that open between it and the next
+   * point, so the bars line up with the equity curve however it was thinned.
+   */
+  function setVolume(candles, note) {
+    if (!charts.vol) return;
+    volumeNote = note || '';
+    volume = points.map(() => null);
+    let j = 0;
+    const list = candles || [];
+    for (let i = 0; i < points.length; i++) {
+      const lo = points[i].time * 1000;
+      const hi = i + 1 < points.length ? points[i + 1].time * 1000 : Infinity;
+      while (j < list.length && list[j][0] < lo) j++;
+      let v = 0;
+      let open = null;
+      let close = null;
+      while (j < list.length && list[j][0] < hi) {
+        if (open === null) open = list[j][1];
+        close = list[j][4];
+        v += list[j][5];
+        j++;
+      }
+      if (open !== null) volume[i] = { value: v, up: close >= open };
+    }
+    drawVolume();
+    charts.vol.priceScale('right').applyOptions({ autoScale: true });
+  }
+
+  // up bars (close at or above open) in the up colour, the rest in the down colour
+  function drawVolume() {
+    const t = theme();
+    main.vol.setData(
+      points.map((p, i) => {
+        const b = volume[i];
+        return b ? { time: p.time, value: b.value, color: rgba(b.up ? t.up : t.down, 0.6) } : { time: p.time };
+      })
+    );
     updateLegends(points.length - 1);
   }
 
@@ -172,7 +225,7 @@
         charts[key].clearCrosshairPosition();
         continue;
       }
-      const v = key === 'equity' ? points[idx].equity : points[idx].drawdown;
+      const v = key === 'equity' ? points[idx].equity : key === 'dd' ? points[idx].drawdown : volume[idx] && volume[idx].value;
       if (Number.isFinite(v)) charts[key].setCrosshairPosition(v, param.time, main[key]);
     }
     syncing = false;
@@ -198,18 +251,28 @@
     const f = BT.fmt;
     el.equityLegend.textContent = '';
     el.ddLegend.textContent = '';
+    el.volLegend.textContent = '';
     if (!points.length || !points[i]) return;
     const p = points[i];
     item(el.equityLegend, null, '', f.date(Math.round(p.time)));
     item(el.equityLegend, theme().accent, 'Equity', `${f.money(p.equity)} (${f.pct((p.equity / capital - 1) * 100, 1)})`);
     item(el.ddLegend, null, 'Drawdown', f.pct(p.drawdown, 1));
+    const v = volume[i];
+    if (v) item(el.volLegend, null, 'Volume', f.compact(v.value));
+    else if (!volumeNote) item(el.volLegend, null, 'Volume', '–');
+    if (volumeNote) item(el.volLegend, null, '', volumeNote);
   }
 
   function retheme() {
     if (!charts.equity) return;
     destroy();
     create();
-    if (points.length) render(points, capital);
+    if (points.length) {
+      const keep = { volume, volumeNote };
+      render(points, capital);
+      ({ volume, volumeNote } = keep);
+      drawVolume();
+    }
   }
 
   // ---------------------------------------------------------------- scatter
@@ -279,5 +342,5 @@
     }
   }
 
-  BT.charts = { init, render, fitAll, focusWindow, retheme, scatter };
+  BT.charts = { init, render, setVolume, fitAll, focusWindow, retheme, scatter };
 })(typeof window !== 'undefined' ? window : globalThis);

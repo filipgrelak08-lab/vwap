@@ -308,6 +308,7 @@ input:disabled, select:disabled { opacity: 0.55; }
 .chart-box { position: relative; width: 100%; }
 .chart-box.equity { height: 230px; }
 .chart-box.dd { height: 120px; border-top: 1px solid var(--line); }
+.chart-box.vol { height: 110px; border-top: 1px solid var(--line); }
 .legend {
   position: absolute; top: 6px; left: 8px; z-index: 3; pointer-events: none; max-width: calc(100% - 90px);
   font: 11.5px/1.5 var(--font-mono); color: var(--ink-2);

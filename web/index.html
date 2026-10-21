@@ -153,7 +153,7 @@
     <section class="tab-panel" data-panel="equity" role="tabpanel" aria-labelledby="tab-equity">
       <div class="card chart-card">
         <div class="card-head">
-          <h3>Equity and drawdown</h3>
+          <h3>Equity, drawdown and volume</h3>
           <div class="card-tools">
             <a class="btn ghost small" id="reportLink" href="#" target="_blank" rel="noopener" hidden>Full report on Trader.dev</a>
             <button type="button" class="btn ghost small" id="fitBtn">Fit all</button>
@@ -161,8 +161,9 @@
         </div>
         <div class="chart-box equity" id="equityChart"><div class="legend" id="equityLegend"></div></div>
         <div class="chart-box dd" id="ddChart"><div class="legend" id="ddLegend"></div></div>
+        <div class="chart-box vol" id="volChart"><div class="legend" id="volLegend"></div></div>
       </div>
-      <p class="fineprint">Scroll to zoom, drag to pan. The candle chart with every fill on it is on <a href="#" id="reportLink2" target="_blank" rel="noopener">the Trader.dev report</a>. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a>.</p>
+      <p class="fineprint">Scroll to zoom, drag to pan. Volume is the market's traded volume per bar, from Bybit (or Binance spot where Bybit is blocked), green when the bar closed up. The candle chart with every fill on it is on <a href="#" id="reportLink2" target="_blank" rel="noopener">the Trader.dev report</a>. Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a>.</p>
     </section>
 
     <!-- Trades -->

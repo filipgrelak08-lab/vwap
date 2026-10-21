@@ -611,7 +611,38 @@
     renderTrades();
     renderMonthly();
     BT.charts.render(run.curve, r.initialCapital);
+    loadVolume(run);
     setPineMsg(`${state.pine.split('\n').length} lines. This is the script Trader.dev just ran.`);
+  }
+
+  // Volume under the equity curve. Trader.dev has no candle call, so the
+  // local server reads public klines; a failure only blanks this panel.
+  const KLINE_MINUTES = [1, 3, 5, 15, 30, 60, 120, 240, 360, 720, 1440, 10080];
+  const TF_MINUTES = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 };
+
+  async function loadVolume(run) {
+    const curve = run.curve;
+    if (curve.length < 2) return BT.charts.setVolume([], 'No bars to show volume for.');
+    // one candle per equity point where possible, never finer than the backtest
+    const spacing = (curve[curve.length - 1].time - curve[0].time) / (curve.length - 1) / 60;
+    const floor = TF_MINUTES[state.market.timeframe] || 1;
+    const minutes = KLINE_MINUTES.filter((m) => m >= floor && m <= Math.max(floor, spacing)).pop() || floor;
+    const q = new URLSearchParams({
+      symbol: run.body.effectiveSymbol || run.result.symbol || state.market.symbol,
+      interval: minutes,
+      from: curve[0].time * 1000,
+      to: (curve[curve.length - 1].time + minutes * 60) * 1000,
+    });
+    try {
+      const res = await fetch(`api/candles?${q}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      if (state.run !== run) return;
+      BT.charts.setVolume(body.bars, body.source === 'Bybit perpetual' ? '' : `(${body.source})`);
+    } catch (e) {
+      if (state.run !== run) return;
+      BT.charts.setVolume([], e instanceof TypeError ? 'Volume needs python3 server.py running.' : e.message);
+    }
   }
 
   // Trader.dev tells us when it changed the request (symbol remapped, dates
@@ -1548,7 +1579,7 @@
 
   async function boot() {
     applyTheme(saved.theme);
-    BT.charts.init({ equity: 'equityChart', dd: 'ddChart', equityLegend: 'equityLegend', ddLegend: 'ddLegend' });
+    BT.charts.init({ equity: 'equityChart', dd: 'ddChart', vol: 'volChart', equityLegend: 'equityLegend', ddLegend: 'ddLegend', volLegend: 'volLegend' });
     bind();
     renderMarket();
     renderSettings();
