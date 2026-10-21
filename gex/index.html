@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nasdaq Gamma Levels</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --border: #e2e1dc;
+    --grid: #ecebe7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #77766f;
+    --pos: #2a78d6;      /* positive gamma / calls (diverging cool pole) */
+    --neg: #e34948;      /* negative gamma / puts (diverging warm pole) */
+    --flip: #6250d6;
+    --candle-up: #a3a29b;
+    --candle-down: #52514e;
+    --good: #0ca30c;
+    --serious: #ec835a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border: #2e2e2b;
+      --grid: #252523;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e86;
+      --pos: #3987e5;
+      --neg: #e66767;
+      --flip: #9085e9;
+      --candle-up: #c3c2b7;
+      --candle-down: #6f6e68;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  .meta { color: var(--text-muted); font-size: 12.5px; }
+  .spacer { flex: 1; }
+  select, button {
+    font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--text-muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .tile .label { color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
+  .tile .value { font-size: 22px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .sub { color: var(--text-muted); font-size: 12.5px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-top: 4px; }
+  .badge .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
+  .card .hint { color: var(--text-muted); font-size: 12.5px; margin: 0 0 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--text-secondary); font-size: 12.5px; margin-bottom: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 18px; height: 0; border-top: 2px dashed; display: inline-block; }
+  .chart-row { display: flex; gap: 0; height: 520px; }
+  #price { flex: 1; min-width: 0; position: relative; }
+  #profile { width: 230px; flex: none; position: relative; border-left: 1px solid var(--grid); }
+  #profile svg, #curve svg { display: block; width: 100%; height: 100%; }
+  #curve { height: 230px; position: relative; }
+  #surface { position: relative; overflow-x: auto; }
+  #surface svg { display: block; }
+  .card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+  .card-head .spacer { flex: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 10px; background: transparent; color: var(--text-secondary); }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); }
+  .scale { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+  .scale .ramp { width: 160px; height: 10px; border-radius: 3px; }
+  #surface3d { height: 600px; position: relative; }
+  #surface3d .status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+  .tip {
+    position: absolute; pointer-events: none; background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12.5px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; display: none; z-index: 5;
+    font-variant-numeric: tabular-nums;
+  }
+  .error { background: var(--surface-1); border: 1px solid var(--neg); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; display: none; }
+  details summary { cursor: pointer; color: var(--text-secondary); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; margin-top: 8px; }
+  th, td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--grid); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  .notes { color: var(--text-muted); font-size: 12.5px; }
+  @media (max-width: 760px) {
+    .chart-row { flex-direction: column; height: auto; }
+    #price { height: 380px; flex: none; }
+    #profile { width: 100%; height: 300px; border-left: 0; border-top: 1px solid var(--grid); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Nasdaq gamma levels</h1>
+    <span class="meta" id="meta">Loading…</span>
+    <span class="spacer"></span>
+    <label class="meta">Options
+      <select id="expiries">
+        <option value="0">All expiries</option>
+        <option value="30">Within 30 days</option>
+        <option value="7">Within 7 days</option>
+      </select>
+    </label>
+    <button id="fitLevels" type="button">Show all levels</button>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+
+  <div class="error" id="error"></div>
+
+  <div class="tiles">
+    <div class="tile"><div class="label">NQ price</div><div class="value" id="tPrice">–</div><div class="sub" id="tPriceSub"></div></div>
+    <div class="tile"><div class="label">Total GEX</div><div class="value" id="tTotal">–</div><div class="badge" id="tRegime"></div></div>
+    <div class="tile"><div class="label"><span class="swatch" style="background:var(--flip)"></span>Gamma flip</div><div class="value" id="tFlip">–</div><div class="sub" id="tFlipSub"></div></div>
+    <div class="tile"><div class="label"><span class="swatch" style="background:var(--pos)"></span>Call wall</div><div class="value" id="tCall">–</div><div class="sub" id="tCallSub"></div></div>
+    <div class="tile"><div class="label"><span class="swatch" style="background:var(--neg)"></span>Put wall</div><div class="value" id="tPut">–</div><div class="sub" id="tPutSub"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>NQ price and gamma by strike</h2>
+    <p class="hint">5-minute NQ futures (New York time) with each candle's volume along the bottom. The bars on the right are the gamma at each price, lined up with the chart's price axis.</p>
+    <div class="legend">
+      <span><i style="border-color:var(--flip)"></i>Gamma flip</span>
+      <span><i style="border-color:var(--pos)"></i>Call wall</span>
+      <span><i style="border-color:var(--neg)"></i>Put wall</span>
+      <span><span class="swatch" style="background:var(--pos)"></span>Positive gamma (calls)</span>
+      <span><span class="swatch" style="background:var(--neg)"></span>Negative gamma (puts)</span>
+      <span><span class="swatch" style="background:var(--candle-up);opacity:.5"></span>Volume (shade of its candle)</span>
+    </div>
+    <div class="chart-row">
+      <div id="price"></div>
+      <div id="profile"><div class="tip" id="profileTip"></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Total gamma if price moved</h2>
+    <p class="hint">Recalculated at each price. Above zero, dealer hedging tends to dampen moves; below zero, it tends to add to them. Where the line crosses zero is the gamma flip.</p>
+    <div id="curve"><div class="tip" id="curveTip"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Gamma and volume surface</h2>
+      <span class="spacer"></span>
+      <div class="seg" id="surfaceView" role="group" aria-label="Surface view">
+        <button type="button" data-view="3d" aria-pressed="true">3D</button>
+        <button type="button" data-view="flat" aria-pressed="false">Flat</button>
+      </div>
+      <div class="seg" id="surfaceMode" role="group" aria-label="Surface shows">
+        <button type="button" data-mode="gex" aria-pressed="true">Net gamma</button>
+        <button type="button" data-mode="vol" aria-pressed="false">Option volume</button>
+        <button type="button" data-mode="skew" aria-pressed="false">Calls vs puts volume</button>
+      </div>
+    </div>
+    <p class="hint" id="surfaceHint"></p>
+    <div id="surface3d"><div class="status" id="surface3dStatus">Loading the 3D view…</div></div>
+    <div id="surface" hidden><div class="tip" id="surfaceTip"></div></div>
+    <div class="scale" id="surfaceScale"></div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>Table: largest gamma strikes</summary>
+      <table id="table"><thead><tr><th>NQ price</th><th>Calls ($bn / 1%)</th><th>Puts ($bn / 1%)</th><th>Net ($bn / 1%)</th></tr></thead><tbody></tbody></table>
+    </details>
+  </div>
+
+  <p class="notes">
+    Data: CBOE's free delayed QQQ and NDX option quotes (open interest updates once a day before the open, quotes are about 15 minutes late) and Yahoo's NQ=F futures prices and volume.
+    GEX assumes dealers are long the calls and short the puts that customers trade; nobody sees the real positions, so treat the levels as estimates, not predictions.
+    Prices refresh every minute, gamma every 10 minutes.
+  </p>
+</div>
+
+<script src="/vendor/lightweight-charts.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const fmt = (x, d = 0) => x == null ? '–' : x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const bn = (x) => (x >= 0 ? '+' : '−') + fmt(Math.abs(x) / 1e9, 2);
+  const pct = (a, b) => ((a / b - 1) * 100);
+  const SVG = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const n = document.createElementNS(SVG, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+
+  let gex = null, bars = [], fitAll = false, lines = [];
+
+  // ---- price chart
+  const chart = LightweightCharts.createChart($('price'), {
+    autoSize: true,
+    localization: { locale: 'en-US' },
+    layout: { background: { color: 'transparent' }, textColor: css('--text-secondary'), fontFamily: 'system-ui, sans-serif' },
+    grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
+    // candles keep the top 78%; volume sits in the band underneath
+    rightPriceScale: { borderColor: css('--border'), scaleMargins: { top: 0.06, bottom: 0.22 } },
+    timeScale: { borderColor: css('--border'), timeVisible: true, secondsVisible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  const candles = chart.addCandlestickSeries({
+    upColor: css('--candle-up'), downColor: css('--candle-down'), borderVisible: false,
+    wickUpColor: css('--candle-up'), wickDownColor: css('--candle-down'),
+    autoscaleInfoProvider: (original) => {
+      const r = original();
+      if (!r || !fitAll || !gex) return r;
+      const lv = [gex.flip, gex.callWall, gex.putWall].filter((x) => x != null);
+      return { priceRange: { minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv) } };
+    },
+  });
+
+  const volume = chart.addHistogramSeries({
+    priceScaleId: 'volume', priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false,
+  });
+  chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  const alpha = (hex, a) => hex + Math.round(a * 255).toString(16).padStart(2, '0');
+  function setVolume() {
+    const up = alpha(css('--candle-up'), 0.5), down = alpha(css('--candle-down'), 0.5);
+    volume.setData(bars.map((b) => ({ time: b.time, value: b.volume || 0, color: b.close >= b.open ? up : down })));
+  }
+
+  function drawLevels() {
+    lines.forEach((l) => candles.removePriceLine(l));
+    lines = [];
+    if (!gex) return;
+    const add = (price, color, title) => price != null && lines.push(candles.createPriceLine({
+      price, color, title, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true,
+    }));
+    add(gex.flip, css('--flip'), 'Gamma flip');
+    add(gex.callWall, css('--pos'), 'Call wall');
+    add(gex.putWall, css('--neg'), 'Put wall');
+  }
+
+  // ---- gamma profile, aligned to the price chart's axis
+  const profile = $('profile'), pTip = $('profileTip');
+  let profileKey = '';
+  function drawProfile(force) {
+    if (!gex) return;
+    const h = profile.clientHeight - chart.timeScale().height();
+    const w = profile.clientWidth;
+    const y = (p) => candles.priceToCoordinate(p);
+    const key = [w, h, y(gex.nq), y(gex.nq * 1.01)].join('|');
+    if (!force && key === profileKey) return;
+    profileKey = key;
+    profile.querySelector('svg')?.remove();
+    const svg = el('svg', { viewBox: `0 0 ${w} ${profile.clientHeight}` });
+    const mid = w / 2;
+    const visible = gex.profile.map((r) => ({ ...r, net: r.calls + r.puts, y: y(r.price) })).filter((r) => r.y != null && r.y >= 0 && r.y <= h);
+    const maxAbs = Math.max(1, ...visible.map((r) => Math.abs(r.net)));
+    const step = Math.abs(y(gex.profile[0].price) - y(gex.profile[0].price + 25)) || 4;
+    const thick = Math.max(2, Math.min(14, step - 2));
+    svg.appendChild(el('line', { x1: mid, x2: mid, y1: 0, y2: h, stroke: css('--border'), 'stroke-width': 1 }));
+    for (const r of visible) {
+      const len = Math.max(1, Math.abs(r.net) / maxAbs * (mid - 6));
+      const pos = r.net >= 0;
+      const x = pos ? mid : mid - len;
+      // 4px-rounded data end, square at the baseline
+      const rx = Math.min(4, thick / 2, len / 2);
+      const d = pos
+        ? `M${x},${r.y - thick / 2} h${len - rx} q${rx},0 ${rx},${rx} v${thick - 2 * rx} q0,${rx} -${rx},${rx} h-${len - rx} z`
+        : `M${mid},${r.y - thick / 2} h-${len - rx} q-${rx},0 -${rx},${rx} v${thick - 2 * rx} q0,${rx} ${rx},${rx} h${len - rx} z`;
+      const bar = el('path', { d, fill: pos ? css('--pos') : css('--neg') });
+      svg.appendChild(bar);
+      // hit target larger than the mark
+      const hit = el('rect', { x: 0, y: r.y - Math.max(thick, 8) / 2, width: w, height: Math.max(thick, 8), fill: 'transparent' });
+      hit.addEventListener('mousemove', (e) => {
+        pTip.style.display = 'block';
+        pTip.innerHTML = `<b>NQ ${fmt(r.price)}</b><br>Calls ${bn(r.calls)} $bn<br>Puts ${bn(r.puts)} $bn<br>Net ${bn(r.net)} $bn per 1%`;
+        const bx = profile.getBoundingClientRect();
+        pTip.style.left = Math.max(0, Math.min(w - pTip.offsetWidth, e.clientX - bx.left - pTip.offsetWidth - 10)) + 'px';
+        pTip.style.top = (e.clientY - bx.top + 12) + 'px';
+      });
+      hit.addEventListener('mouseleave', () => (pTip.style.display = 'none'));
+      svg.appendChild(hit);
+    }
+    // label the largest bars only, on the empty side of the axis
+    const label = (r) => {
+      const t = el('text', { x: r.net >= 0 ? mid - 6 : mid + 6, y: r.y + 4, 'text-anchor': r.net >= 0 ? 'end' : 'start', 'font-size': 11, fill: css('--text-secondary') });
+      t.textContent = fmt(r.price);
+      svg.appendChild(t);
+    };
+    [...visible].sort((a, b) => Math.abs(b.net) - Math.abs(a.net)).slice(0, 4).forEach(label);
+    profile.insertBefore(svg, pTip);
+  }
+  // redraw after the chart has re-laid itself out, on zoom and scroll, and poll for price-axis drags
+  const redrawSoon = () => requestAnimationFrame(() => requestAnimationFrame(() => drawProfile(true)));
+  chart.timeScale().subscribeVisibleLogicalRangeChange(redrawSoon);
+  new ResizeObserver(redrawSoon).observe(profile);
+  setInterval(() => drawProfile(false), 200);
+
+  // ---- total GEX vs price
+  const curveBox = $('curve'), cTip = $('curveTip');
+  function drawCurve() {
+    if (!gex) return;
+    curveBox.querySelector('svg')?.remove();
+    const w = curveBox.clientWidth, h = curveBox.clientHeight, m = { l: 56, r: 12, t: 10, b: 26 };
+    if (w < 200) return;
+    const pts = gex.curve;
+    const xs = pts.map((p) => p.price), ys = pts.map((p) => p.gex);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const yMax = Math.max(...ys.map(Math.abs)) * 1.1 || 1;
+    const X = (v) => m.l + (v - x0) / (x1 - x0) * (w - m.l - m.r);
+    const Y = (v) => m.t + (yMax - v) / (2 * yMax) * (h - m.t - m.b);
+    const svg = el('svg', { viewBox: `0 0 ${w} ${h}` });
+    // recessive grid and axis labels
+    for (const v of [-yMax / 1.1, -yMax / 2.2, 0, yMax / 2.2, yMax / 1.1]) {
+      svg.appendChild(el('line', { x1: m.l, x2: w - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? css('--text-muted') : css('--grid'), 'stroke-width': 1 }));
+      const t = el('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: css('--text-muted') });
+      t.textContent = bn(v) + 'bn';
+      svg.appendChild(t);
+    }
+    const ticks = 6;
+    for (let i = 0; i <= ticks; i++) {
+      const v = x0 + (x1 - x0) * i / ticks;
+      const t = el('text', { x: X(v), y: h - 8, 'text-anchor': i === 0 ? 'start' : i === ticks ? 'end' : 'middle', 'font-size': 11, fill: css('--text-muted') });
+      t.textContent = fmt(Math.round(v / 50) * 50);
+      svg.appendChild(t);
+    }
+    // area split at zero: positive in the cool pole, negative in the warm pole
+    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.price)},${Y(p.gex)}`).join('');
+    const area = `${path}L${X(x1)},${Y(0)}L${X(x0)},${Y(0)}Z`;
+    const defs = el('defs', {});
+    const cp = el('clipPath', { id: 'above' }); cp.appendChild(el('rect', { x: 0, y: 0, width: w, height: Y(0) }));
+    const cn = el('clipPath', { id: 'below' }); cn.appendChild(el('rect', { x: 0, y: Y(0), width: w, height: h }));
+    defs.append(cp, cn); svg.appendChild(defs);
+    svg.appendChild(el('path', { d: area, fill: css('--pos'), 'fill-opacity': 0.18, 'clip-path': 'url(#above)' }));
+    svg.appendChild(el('path', { d: area, fill: css('--neg'), 'fill-opacity': 0.18, 'clip-path': 'url(#below)' }));
+    svg.appendChild(el('path', { d: path, fill: 'none', stroke: css('--text-secondary'), 'stroke-width': 2 }));
+    // markers: current price and flip
+    const vline = (v, color, label) => {
+      if (v == null || v < x0 || v > x1) return;
+      svg.appendChild(el('line', { x1: X(v), x2: X(v), y1: m.t, y2: h - m.b, stroke: color, 'stroke-width': 2, 'stroke-dasharray': '5 4' }));
+      const t = el('text', { x: X(v) + 4, y: m.t + 12, 'font-size': 11.5, fill: css('--text-primary') });
+      t.textContent = label;
+      svg.appendChild(t);
+    };
+    vline(gex.flip, css('--flip'), `Flip ${fmt(gex.flip)}`);
+    vline(gex.nq, css('--text-primary'), `Now ${fmt(gex.nq)}`);
+    // crosshair + tooltip
+    const cross = el('line', { y1: m.t, y2: h - m.b, stroke: css('--text-muted'), 'stroke-width': 1, visibility: 'hidden' });
+    const dot = el('circle', { r: 4, fill: css('--text-primary'), stroke: css('--surface-1'), 'stroke-width': 2, visibility: 'hidden' });
+    svg.append(cross, dot);
+    const hit = el('rect', { x: m.l, y: 0, width: w - m.l - m.r, height: h, fill: 'transparent' });
+    hit.addEventListener('mousemove', (e) => {
+      const bx = curveBox.getBoundingClientRect();
+      const px = e.clientX - bx.left;
+      const v = x0 + (px - m.l) / (w - m.l - m.r) * (x1 - x0);
+      const p = pts.reduce((a, b) => Math.abs(b.price - v) < Math.abs(a.price - v) ? b : a);
+      cross.setAttribute('x1', X(p.price)); cross.setAttribute('x2', X(p.price)); cross.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', X(p.price)); dot.setAttribute('cy', Y(p.gex)); dot.setAttribute('visibility', 'visible');
+      cTip.style.display = 'block';
+      cTip.innerHTML = `<b>NQ ${fmt(p.price)}</b> (${pct(p.price, gex.nq) >= 0 ? '+' : ''}${fmt(pct(p.price, gex.nq), 1)}%)<br>Total GEX ${bn(p.gex)} $bn per 1%`;
+      cTip.style.left = Math.max(0, Math.min(w - cTip.offsetWidth, X(p.price) + 12)) + 'px';
+      cTip.style.top = Math.max(0, Y(p.gex) - 50) + 'px';
+    });
+    hit.addEventListener('mouseleave', () => { cTip.style.display = 'none'; cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); });
+    svg.appendChild(hit);
+    curveBox.insertBefore(svg, cTip);
+  }
+  new ResizeObserver(() => drawCurve()).observe(curveBox);
+
+  // ---- gamma / volume surface: expiries across, NQ price down
+  const surfaceBox = $('surface'), sTip = $('surfaceTip');
+  let surfaceMode = 'gex';
+  const usd = (x) => {
+    const a = Math.abs(x);
+    return a >= 1e9 ? fmt(x / 1e9, 2) + 'bn' : a >= 1e6 ? fmt(x / 1e6, 1) + 'm' : a >= 1e3 ? fmt(x / 1e3, 0) + 'k' : fmt(x, 0);
+  };
+  const MODES = {
+    gex: {
+      hint: 'Dealer gamma at each price and expiry, per 1% move. Blue is positive (calls), red is negative (puts). Deeper colour means more gamma.',
+      value: (c) => c.callGex + c.putGex, diverging: true, lo: 'Puts', hi: 'Calls',
+    },
+    vol: {
+      hint: "Today's option volume at each price and expiry, in dollars of the underlying so QQQ and NDX add up. CBOE resets it each morning, so it is thin before the open.",
+      value: (c) => c.callVol + c.putVol, diverging: false, lo: 'Little', hi: 'Most traded',
+    },
+    skew: {
+      hint: "Today's call volume minus put volume at each price and expiry. Blue cells traded more calls, red cells more puts.",
+      value: (c) => c.callVol - c.putVol, diverging: true, lo: 'More puts', hi: 'More calls',
+    },
+  };
+  const shortDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const weekday = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+
+  // ---- the same surface in 3D (Plotly, loaded on first use): drag to rotate, scroll to zoom
+  let surfaceView = '3d', plotly = null, camera = null;
+  function loadPlotly() {
+    if (!plotly) {
+      plotly = new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js';
+        sc.onload = () => resolve(window.Plotly);
+        sc.onerror = () => { plotly = null; reject(new Error('Could not load the 3D library. Is this computer online?')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return plotly;
+  }
+
+  async function drawSurface3d() {
+    const box = $('surface3d'), status = $('surface3dStatus');
+    const mode = MODES[surfaceMode];
+    const sf = gex.surface;
+    $('surfaceHint').textContent = mode.hint + ' Drag to rotate, scroll to zoom.';
+    $('surfaceScale').textContent = '';
+    let Plotly;
+    try { Plotly = await loadPlotly(); } catch (e) { status.textContent = e.message; status.style.display = ''; return; }
+    status.style.display = 'none';
+    const byKey = new Map(sf.cells.map((c) => [`${c.expiry}|${c.price}`, c]));
+    const prices = [...new Set(sf.cells.map((c) => c.price))].sort((a, b) => a - b);
+    const lo = prices[0], hi = prices[prices.length - 1];
+    const ys = [];
+    for (let p = lo; p <= hi; p += sf.bucket) ys.push(p);
+    const xs = sf.expiries.map((_, i) => i);
+    const isGex = surfaceMode === 'gex';
+    const unit = isGex ? 1e9 : 1e6;
+    const z = ys.map((p) => sf.expiries.map((e) => { const c = byKey.get(`${e}|${p}`); return c ? mode.value(c) / unit : 0; }));
+    const text = ys.map((p) => sf.expiries.map((e) => {
+      const c = byKey.get(`${e}|${p}`) || { callGex: 0, putGex: 0, callVol: 0, putVol: 0 };
+      return `NQ ${fmt(p)} · ${shortDate(e)} expiry<br>Gamma: calls ${bn(c.callGex)}, puts ${bn(c.putGex)} $bn per 1%<br>Volume today: calls $${usd(c.callVol)}, puts $${usd(c.putVol)}`;
+    }));
+    const max = Math.max(1e-9, ...z.flat().map(Math.abs));
+    const colorscale = mode.diverging
+      ? [[0, css('--neg')], [0.5, css('--surface-1')], [1, css('--pos')]]
+      : [[0, css('--surface-1')], [1, css('--flip')]];
+    const ink = css('--text-secondary'), grid = css('--border');
+    const axis = (title, extra) => ({ title: { text: title, font: { size: 12, color: ink } }, tickfont: { size: 10.5, color: ink }, gridcolor: grid, zerolinecolor: grid, backgroundcolor: 'rgba(0,0,0,0)', showspikes: false, ...extra });
+    const zTitle = isGex ? 'Gamma ($bn per 1%)' : surfaceMode === 'vol' ? 'Volume ($m)' : 'Calls − puts ($m)';
+    const traces = [
+      {
+        type: 'surface', x: xs, y: ys, z, text, hoverinfo: 'text', colorscale,
+        cmin: mode.diverging ? -max : 0, cmax: max, showscale: false,
+        contours: { z: { show: false } }, lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.05 },
+      },
+      {
+        type: 'scatter3d', mode: 'lines', x: [0, xs.length - 1], y: [gex.nq, gex.nq], z: [0, 0],
+        line: { color: css('--text-primary'), width: 6, dash: 'dash' }, hoverinfo: 'text', text: `Now ${fmt(gex.nq)}`, name: 'Now',
+      },
+    ];
+    const layout = {
+      paper_bgcolor: 'rgba(0,0,0,0)', margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false,
+      font: { family: 'system-ui, sans-serif' },
+      hoverlabel: { bgcolor: css('--surface-1'), bordercolor: grid, font: { color: css('--text-primary'), size: 12 } },
+      scene: {
+        xaxis: axis('Expiry', { tickvals: xs, ticktext: sf.expiries.map(shortDate) }),
+        yaxis: axis('NQ price', { tickformat: ',.0f' }),
+        zaxis: axis(zTitle),
+        aspectmode: 'manual', aspectratio: { x: 1.3, y: 1.6, z: 0.7 },
+        camera: camera || { eye: { x: 1.45, y: -1.3, z: 0.75 }, center: { x: 0, y: 0, z: -0.1 } },
+      },
+    };
+    await Plotly.react(box, traces, layout, { displaylogo: false, responsive: true, modeBarButtonsToRemove: ['toImage', 'resetCameraLastSave3d'] });
+    if (!box._cameraHooked) {
+      box._cameraHooked = true;
+      box.on('plotly_relayout', (ev) => { if (ev['scene.camera']) camera = ev['scene.camera']; });
+    }
+  }
+
+  function drawSurface() {
+    if (!gex || !gex.surface) return;
+    $('surface').hidden = surfaceView !== 'flat';
+    $('surface3d').hidden = surfaceView !== '3d';
+    if (surfaceView === '3d') return drawSurface3d();
+    surfaceBox.querySelector('svg')?.remove();
+    const mode = MODES[surfaceMode];
+    const sf = gex.surface;
+    $('surfaceHint').textContent = mode.hint;
+    if (!sf.expiries.length) return;
+    const byKey = new Map(sf.cells.map((c) => [`${c.expiry}|${c.price}`, c]));
+    const prices = [...new Set(sf.cells.map((c) => c.price))].sort((a, b) => b - a);
+    const values = sf.cells.map(mode.value);
+    const max = Math.max(1, ...values.map(Math.abs));
+    const m = { l: 62, r: 8, t: 34, b: 6 };
+    const cw = Math.max(44, (surfaceBox.clientWidth - m.l - m.r) / sf.expiries.length);
+    const ch = 13;
+    const w = m.l + m.r + cw * sf.expiries.length, h = m.t + m.b + ch * prices.length;
+    const svg = el('svg', { width: w, height: h, viewBox: `0 0 ${w} ${h}` });
+    // square-root scale so a few huge cells don't wash out the rest
+    const fill = (v) => {
+      const a = Math.sqrt(Math.abs(v) / max);
+      const color = !mode.diverging ? css('--flip') : v >= 0 ? css('--pos') : css('--neg');
+      return { color, opacity: a < 0.02 ? 0 : 0.08 + 0.92 * a };
+    };
+    sf.expiries.forEach((e, i) => {
+      const x = m.l + i * cw + cw / 2;
+      const t1 = el('text', { x, y: 13, 'text-anchor': 'middle', 'font-size': 11, fill: css('--text-secondary') });
+      t1.textContent = shortDate(e);
+      const t2 = el('text', { x, y: 26, 'text-anchor': 'middle', 'font-size': 10.5, fill: css('--text-muted') });
+      t2.textContent = weekday(e);
+      svg.append(t1, t2);
+    });
+    prices.forEach((p, j) => {
+      const y = m.t + j * ch;
+      if (p % 100 === 0) {
+        const t = el('text', { x: m.l - 6, y: y + ch / 2 + 4, 'text-anchor': 'end', 'font-size': 11, fill: css('--text-muted') });
+        t.textContent = fmt(p);
+        svg.appendChild(t);
+      }
+      sf.expiries.forEach((e, i) => {
+        const c = byKey.get(`${e}|${p}`);
+        if (!c) return;
+        const f = fill(mode.value(c));
+        if (!f.opacity) return;
+        svg.appendChild(el('rect', { x: m.l + i * cw + 1, y: y + 1, width: cw - 2, height: ch - 2, rx: 2, fill: f.color, 'fill-opacity': f.opacity }));
+      });
+    });
+    // current price
+    const yNow = m.t + (prices[0] - gex.nq) / sf.bucket * ch + ch / 2;
+    if (yNow > m.t && yNow < h - m.b) {
+      svg.appendChild(el('line', { x1: m.l, x2: w - m.r, y1: yNow, y2: yNow, stroke: css('--text-primary'), 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }));
+      const t = el('text', { x: m.l - 6, y: yNow + 4, 'text-anchor': 'end', 'font-size': 11, 'font-weight': 650, fill: css('--text-primary') });
+      t.textContent = 'Now';
+      svg.appendChild(t);
+    }
+    const hit = el('rect', { x: m.l, y: m.t, width: w - m.l - m.r, height: h - m.t - m.b, fill: 'transparent' });
+    hit.addEventListener('mousemove', (ev) => {
+      const bx = svg.getBoundingClientRect();
+      const i = Math.floor((ev.clientX - bx.left - m.l) / cw), j = Math.floor((ev.clientY - bx.top - m.t) / ch);
+      const e = sf.expiries[i], p = prices[j];
+      const c = e && p != null && byKey.get(`${e}|${p}`);
+      if (!c) { sTip.style.display = 'none'; return; }
+      sTip.style.display = 'block';
+      sTip.innerHTML = `<b>NQ ${fmt(p)} · ${shortDate(e)} expiry</b><br>Gamma: calls ${bn(c.callGex)}, puts ${bn(c.putGex)}, net ${bn(c.callGex + c.putGex)} $bn per 1%<br>Volume today: calls $${usd(c.callVol)}, puts $${usd(c.putVol)}`;
+      const left = ev.clientX - surfaceBox.getBoundingClientRect().left + surfaceBox.scrollLeft;
+      sTip.style.left = Math.max(0, Math.min(w - sTip.offsetWidth, left + 12)) + 'px';
+      sTip.style.top = (ev.clientY - surfaceBox.getBoundingClientRect().top + 14) + 'px';
+    });
+    hit.addEventListener('mouseleave', () => (sTip.style.display = 'none'));
+    svg.appendChild(hit);
+    surfaceBox.insertBefore(svg, sTip);
+    const ramp = mode.diverging
+      ? `linear-gradient(90deg, ${css('--neg')}, transparent, ${css('--pos')})`
+      : `linear-gradient(90deg, transparent, ${css('--flip')})`;
+    const top = surfaceMode === 'gex' ? `${fmt(max / 1e9, 2)} $bn per 1%` : `$${usd(max)}`;
+    $('surfaceScale').innerHTML = `<span>${mode.lo}</span><span class="ramp" style="background:${ramp}"></span><span>${mode.hi}</span><span>· deepest cell ${top}</span>`;
+  }
+  $('surfaceMode').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    surfaceMode = b.dataset.mode;
+    $('surfaceMode').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    drawSurface();
+  });
+  $('surfaceView').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    surfaceView = b.dataset.view;
+    $('surfaceView').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    drawSurface();
+  });
+  new ResizeObserver(() => surfaceView === 'flat' && drawSurface()).observe(surfaceBox);
+
+  // ---- tiles and table
+  function renderStats() {
+    const g = gex;
+    const last = bars.length ? bars[bars.length - 1].close : g.nq;
+    $('tPrice').textContent = fmt(last, 2);
+    $('tPriceSub').textContent = `QQQ ${fmt(g.qqq, 2)} · NDX ${fmt(g.ndx, 2)}`;
+    $('tTotal').textContent = `${bn(g.total)} $bn`;
+    const pos = g.regime === 'positive';
+    $('tRegime').innerHTML = `${pos ? '▲ Positive gamma: choppier' : '▼ Negative gamma: trendier'}`;
+    const rel = (lv) => lv == null ? '' : `${pct(lv, last) >= 0 ? '+' : ''}${fmt(pct(lv, last), 1)}% from price`;
+    $('tFlip').textContent = g.flip == null ? 'none' : fmt(g.flip);
+    $('tFlipSub').textContent = g.flip == null ? 'not within 8% of the price' : `${rel(g.flip)} · price ${last > g.flip ? 'above' : 'below'}`;
+    $('tCall').textContent = fmt(g.callWall); $('tCallSub').textContent = `${rel(g.callWall)} · often resistance`;
+    $('tPut').textContent = fmt(g.putWall); $('tPutSub').textContent = `${rel(g.putWall)} · often support`;
+    const t = new Date(g.computed);
+    $('meta').textContent = `Options data ${g.dataTime} · calculated ${t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · ${fmt(g.optionsUsed.QQQ)} QQQ + ${fmt(g.optionsUsed.NDX)} NDX options`;
+    const rows = [...g.profile].map((r) => ({ ...r, net: r.calls + r.puts })).sort((a, b) => Math.abs(b.net) - Math.abs(a.net)).slice(0, 15).sort((a, b) => b.price - a.price);
+    $('table').querySelector('tbody').innerHTML = rows.map((r) => `<tr><td>${fmt(r.price)}</td><td>${bn(r.calls)}</td><td>${bn(r.puts)}</td><td>${bn(r.net)}</td></tr>`).join('');
+  }
+
+  // ---- data
+  function showError(msg) { const e = $('error'); e.style.display = msg ? 'block' : 'none'; e.textContent = msg || ''; }
+
+  async function getJson(url) {
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  }
+
+  async function loadGex(refresh) {
+    try {
+      $('meta').textContent = 'Calculating gamma…';
+      gex = await getJson(`/api/gex?maxDays=${$('expiries').value}${refresh ? '&refresh=1' : ''}`);
+      showError('');
+      drawLevels(); renderStats(); drawProfile(true); drawCurve(); drawSurface();
+    } catch (e) { showError(`Could not load the option data: ${e.message}`); }
+  }
+
+  async function loadPrice() {
+    try {
+      bars = await getJson('/api/price');
+      candles.setData(bars);
+      setVolume();
+      if (gex) { renderStats(); drawProfile(true); }
+    } catch (e) { showError(`Could not load NQ prices: ${e.message}`); }
+  }
+
+  $('refresh').addEventListener('click', () => { loadPrice(); loadGex(true); });
+  $('expiries').addEventListener('change', () => loadGex(false));
+  $('fitLevels').addEventListener('click', () => {
+    fitAll = !fitAll;
+    $('fitLevels').textContent = fitAll ? 'Fit to price' : 'Show all levels';
+    candles.applyOptions({});  // re-run autoscale
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    setTimeout(() => drawProfile(true), 50);
+  });
+
+  loadPrice().then(() => chart.timeScale().setVisibleLogicalRange({ from: bars.length - 200, to: bars.length + 5 }));
+  loadGex(false);
+  setInterval(loadPrice, 60 * 1000);
+  setInterval(() => loadGex(false), 10 * 60 * 1000);
+})();
+</script>
+</body>
+</html>

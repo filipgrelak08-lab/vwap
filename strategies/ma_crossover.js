@@ -13,18 +13,20 @@ export default {
     type: { value: 'EMA', options: ['SMA', 'EMA', 'WMA'], label: 'MA type' },
   },
 
-  setup({ data, params, ta, plot }) {
-    const ma = { SMA: ta.sma, EMA: ta.ema, WMA: ta.wma }[params.type];
-    const fast = ma(data.close, params.fast);
-    const slow = ma(data.close, params.slow);
-    plot(`Fast ${params.type} ${params.fast}`, fast, { color: 'accent' });
-    plot(`Slow ${params.type} ${params.slow}`, slow, { color: 'vwap' });
-    return { fast, slow };
-  },
+  pine({ p }) {
+    return {
+      body: `
+maType = ${p.type}
+fastMa = maType == "SMA" ? ta.sma(close, ${p.fast}) : maType == "WMA" ? ta.wma(close, ${p.fast}) : ta.ema(close, ${p.fast})
+slowMa = maType == "SMA" ? ta.sma(close, ${p.slow}) : maType == "WMA" ? ta.wma(close, ${p.slow}) : ta.ema(close, ${p.slow})`,
 
-  onBar(ctx) {
-    const { ind } = ctx;
-    if (ctx.crossOver(ind.fast, ind.slow)) ctx.long({ label: 'Golden cross' });
-    if (ctx.crossUnder(ind.fast, ind.slow)) ctx.short({ label: 'Death cross' });
+      longEntry: 'ta.crossover(fastMa, slowMa)',
+      shortEntry: 'ta.crossunder(fastMa, slowMa)',
+
+      plots: [
+        { title: 'Fast MA', expr: 'fastMa' },
+        { title: 'Slow MA', expr: 'slowMa' },
+      ],
+    };
   },
 };

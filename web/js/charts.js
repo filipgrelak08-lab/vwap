@@ -1,26 +1,30 @@
 /*
  * Chart rendering on top of TradingView Lightweight Charts (v4).
- * Four stacked charts share one bar index, so zooming, panning and the
- * crosshair stay in sync: price + overlays, optional lower pane, equity,
- * drawdown.
+ *
+ * The data comes from Trader.dev: a per-bar equity curve with the drawdown
+ * at each bar, plus the market's volume bucketed onto the same bars. Three
+ * charts are stacked and share one bar range, so zooming, panning and the
+ * crosshair stay in sync.
+ *
+ * Candles and indicator overlays are not drawn here. Trader.dev runs the
+ * backtest and its own report page has the price chart with every fill on
+ * it; the app links to that report after each run.
  */
 (function (root) {
   'use strict';
   const BT = (root.BT = root.BT || {});
   const LW = () => root.LightweightCharts;
-  const PAD = 11; // fixed-width price labels keep the four charts' plot areas aligned
+  const PAD = 11; // fixed-width price labels keep both plot areas aligned
 
   const el = {};
   const charts = {};
-  const main = {}; // the series each chart's crosshair snaps to
-  let overlays = []; // { chart, series, plot }
-  let focusLines = [];
-  let result = null;
-  let dataKey = null;
+  const main = {};
+  let points = []; // { time (s), equity, drawdown }
+  let volume = []; // per point: { value, up } or null, aligned with points
+  let volumeNote = '';
   let timeIndex = new Map();
   let syncing = false;
-  let showMarkers = true;
-  let markerCache = [];
+  let capital = 0;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -28,8 +32,7 @@
     return {
       surface: css('--surface'), text: css('--muted'), ink: css('--ink'), ink2: css('--ink-2'),
       grid: css('--grid'), line: css('--line'), up: css('--up'), down: css('--down'),
-      accent: css('--accent'), vwap: css('--vwap'), band: css('--band'), bh: css('--bh'), bad: css('--bad'),
-      series: [1, 2, 3, 4, 5, 6, 7, 8].map((k) => css(`--s${k}`)),
+      accent: css('--accent'), band: css('--band'),
     };
   }
 
@@ -40,17 +43,10 @@
     return `rgba(${(v >> 16) & 255}, ${(v >> 8) & 255}, ${v & 255}, ${a})`;
   }
 
-  function resolveColor(name, t, k) {
-    if (!name) return t.series[k % t.series.length];
-    const named = { vwap: t.vwap, band: t.band, accent: t.accent, up: t.up, down: t.down, muted: t.text, ink: t.ink };
-    return named[name] || name;
-  }
-
   const pad = (s) => String(s).padStart(PAD);
-  const fmtPrice = (v) => pad(BT.fmt.price(v));
   const fmtMoney = (v) => pad(BT.fmt.money(v));
   const fmtPct = (v) => pad(`${v.toFixed(1)}%`);
-  const fmtNum = (v) => pad(BT.fmt.num(v, Math.abs(v) >= 100 ? 0 : 2));
+  const fmtVol = (v) => pad(BT.fmt.compact(v));
 
   function options(t, o) {
     return {
@@ -76,37 +72,25 @@
 
   function create() {
     const t = theme();
-    const make = (key, box, o) => {
-      charts[key] = LW().createChart(box, options(t, o));
-    };
-    make('price', el.price, { logo: true, formatter: fmtPrice, margins: { top: 0.12, bottom: 0.06 } });
-    make('osc', el.osc, { timeAxis: true, formatter: fmtNum, margins: { top: 0.12, bottom: 0.08 } });
-    make('equity', el.equity, { formatter: fmtMoney, margins: { top: 0.14, bottom: 0.06 } });
-    make('dd', el.dd, { timeAxis: true, formatter: fmtPct, margins: { top: 0.18, bottom: 0.02 } });
+    charts.equity = LW().createChart(el.equity, options(t, { logo: true, formatter: fmtMoney, margins: { top: 0.14, bottom: 0.06 } }));
+    charts.dd = LW().createChart(el.dd, options(t, { formatter: fmtPct, margins: { top: 0.18, bottom: 0.02 } }));
+    charts.vol = LW().createChart(el.vol, options(t, { timeAxis: true, formatter: fmtVol, margins: { top: 0.2, bottom: 0 } }));
 
-    main.candle = charts.price.addCandlestickSeries({
-      upColor: t.up, downColor: t.down, borderVisible: false, wickUpColor: t.up, wickDownColor: t.down,
-      priceLineVisible: false,
-    });
-    main.bh = charts.equity.addLineSeries({ color: t.bh, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     main.equity = charts.equity.addAreaSeries({
       lineColor: t.accent, lineWidth: 2, topColor: rgba(t.accent, 0.16), bottomColor: rgba(t.accent, 0.01),
       priceLineVisible: false,
     });
     main.dd = charts.dd.addAreaSeries({
       lineColor: t.down, lineWidth: 1.5, topColor: rgba(t.down, 0.04), bottomColor: rgba(t.down, 0.22),
-      invertFilledArea: false, priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false,
     });
-    main.osc = null;
+    main.vol = charts.vol.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, base: 0 });
 
-    // keep every chart on the same bar range
     for (const key of Object.keys(charts)) {
       charts[key].timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (syncing || !range) return;
         syncing = true;
-        for (const other of Object.keys(charts)) {
-          if (other !== key && !(other === 'osc' && el.osc.hidden)) charts[other].timeScale().setVisibleLogicalRange(range);
-        }
+        for (const other of Object.keys(charts)) if (other !== key) charts[other].timeScale().setVisibleLogicalRange(range);
         syncing = false;
       });
       charts[key].subscribeCrosshairMove((param) => onCrosshair(key, param));
@@ -118,192 +102,131 @@
       charts[key].remove();
       delete charts[key];
     }
-    overlays = [];
-    focusLines = [];
-    dataKey = null;
   }
 
   function init(ids) {
-    el.price = document.getElementById(ids.price);
-    el.osc = document.getElementById(ids.osc);
     el.equity = document.getElementById(ids.equity);
     el.dd = document.getElementById(ids.dd);
-    el.priceLegend = document.getElementById(ids.priceLegend);
-    el.oscLegend = document.getElementById(ids.oscLegend);
     el.equityLegend = document.getElementById(ids.equityLegend);
     el.ddLegend = document.getElementById(ids.ddLegend);
+    el.vol = document.getElementById(ids.vol);
+    el.volLegend = document.getElementById(ids.volLegend);
     if (!LW()) throw new Error('The chart library failed to load.');
     create();
   }
 
   // ---------------------------------------------------------------- render
 
-  function lineData(times, series) {
-    const out = new Array(times.length);
-    for (let i = 0; i < times.length; i++) {
-      const v = series[i];
-      out[i] = Number.isFinite(v) ? { time: times[i], value: v } : { time: times[i] };
-    }
-    return out;
+  /**
+   * @param {Array<{time:number, equity:number, drawdown:number}>} curve  time in Unix seconds
+   * @param {number} startCapital
+   */
+  function render(curve, startCapital) {
+    if (!charts.equity) create();
+    points = curve || [];
+    capital = startCapital;
+    timeIndex = new Map(points.map((p, i) => [p.time, i]));
+    main.equity.setData(points.map((p) => ({ time: p.time, value: p.equity })));
+    main.dd.setData(points.map((p) => ({ time: p.time, value: p.drawdown })));
+    volume = [];
+    volumeNote = 'Loading volume…';
+    main.vol.setData([]);
+    fitAll();
+    updateLegends(points.length - 1);
   }
 
-  function buildMarkers(res, t) {
-    const times = res.data.time;
-    const out = [];
-    for (const tr of res.trades) {
-      const long = tr.side === 'long';
-      out.push({
-        time: times[tr.entryIndex], position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown',
-        color: long ? t.up : t.down, size: 1,
-      });
-      out.push({
-        time: times[tr.exitIndex], position: long ? 'aboveBar' : 'belowBar', shape: 'circle',
-        color: t.text, size: 0.5,
-      });
+  /**
+   * Volume for the bars on screen. candles: [[openMs, o, h, l, c, v], ...].
+   * Each equity point gets the candles that open between it and the next
+   * point, so the bars line up with the equity curve however it was thinned.
+   */
+  function setVolume(candles, note) {
+    if (!charts.vol) return;
+    volumeNote = note || '';
+    volume = points.map(() => null);
+    let j = 0;
+    const list = candles || [];
+    for (let i = 0; i < points.length; i++) {
+      const lo = points[i].time * 1000;
+      const hi = i + 1 < points.length ? points[i + 1].time * 1000 : Infinity;
+      while (j < list.length && list[j][0] < lo) j++;
+      let v = 0;
+      let open = null;
+      let close = null;
+      while (j < list.length && list[j][0] < hi) {
+        if (open === null) open = list[j][1];
+        close = list[j][4];
+        v += list[j][5];
+        j++;
+      }
+      if (open !== null) volume[i] = { value: v, up: close >= open };
     }
-    out.sort((a, b) => a.time - b.time);
-    return out;
+    drawVolume();
+    charts.vol.priceScale('right').applyOptions({ autoScale: true });
   }
 
-  function render(res) {
-    if (!charts.price) create();
+  // up bars (close at or above open) in the up colour, the rest in the down colour
+  function drawVolume() {
     const t = theme();
-    const d = res.data;
-    const times = d.time;
-    const key = `${d.symbol}|${d.interval}|${d.length}|${times[0]}|${times[d.length - 1]}`;
-    const newData = key !== dataKey;
-    result = res;
-    clearFocus();
-
-    const intraday = BT.fmt.isIntraday(d);
-    for (const c of Object.values(charts)) c.applyOptions({ timeScale: { timeVisible: intraday } });
-
-    if (newData) {
-      main.candle.setData(times.map((tm, i) => ({ time: tm, open: d.open[i], high: d.high[i], low: d.low[i], close: d.close[i] })));
-      timeIndex = new Map(times.map((tm, i) => [tm, i]));
-      dataKey = key;
-    }
-
-    for (const o of overlays) o.chart.removeSeries(o.series);
-    overlays = [];
-    main.osc = null;
-
-    let k = 0;
-    let lowerCount = 0;
-    for (const p of res.plots) {
-      const lower = p.pane === 'lower';
-      const chart = lower ? charts.osc : charts.price;
-      // un-coloured lower-pane lines start from the accent so they don't echo the VWAP amber
-      const color = !p.color && lower && lowerCount === 0 ? t.accent : resolveColor(p.color, t, k);
-      k++;
-      if (lower) lowerCount++;
-      let series;
-      if (p.style === 'histogram') {
-        series = chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
-        series.setData(times.map((tm, i) => {
-          const v = p.series[i];
-          return Number.isFinite(v) ? { time: tm, value: v, color: rgba(v >= 0 ? t.up : t.down, 0.55) } : { time: tm };
-        }));
-      } else {
-        const style = { dashed: LW().LineStyle.Dashed, dots: LW().LineStyle.Dotted }[p.style] || LW().LineStyle.Solid;
-        series = chart.addLineSeries({
-          color, lineWidth: p.width || (lower ? 1.5 : 1.5), lineStyle: style,
-          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-        });
-        series.setData(lineData(times, p.series));
-      }
-      if (lower && Array.isArray(p.levels)) {
-        for (const lv of p.levels) series.createPriceLine({ price: lv, color: t.band, lineWidth: 1, lineStyle: LW().LineStyle.Dashed, axisLabelVisible: false, title: '' });
-      }
-      if (lower && !main.osc) main.osc = series;
-      overlays.push({ chart, series, plot: p, color });
-    }
-    el.osc.hidden = !overlays.some((o) => o.plot.pane === 'lower');
-    charts.price.applyOptions({ timeScale: { visible: el.osc.hidden } });
-
-    markerCache = buildMarkers(res, t);
-    main.candle.setMarkers(showMarkers ? markerCache : []);
-
-    main.equity.setData(times.map((tm, i) => ({ time: tm, value: res.equity[i] })));
-    main.bh.setData(times.map((tm, i) => ({ time: tm, value: res.buyHold[i] })));
-    const dd = BT.metrics.drawdownSeries(res.equity);
-    res.drawdown = dd;
-    main.dd.setData(times.map((tm, i) => ({ time: tm, value: dd[i] })));
-
-    if (newData) fitAll();
-    else {
-      // re-align a freshly shown lower pane with the others
-      const range = charts.price.timeScale().getVisibleLogicalRange();
-      if (range && !el.osc.hidden) charts.osc.timeScale().setVisibleLogicalRange(range);
-    }
-    updateLegends(times.length - 1);
+    main.vol.setData(
+      points.map((p, i) => {
+        const b = volume[i];
+        return b ? { time: p.time, value: b.value, color: rgba(b.up ? t.up : t.down, 0.6) } : { time: p.time };
+      })
+    );
+    updateLegends(points.length - 1);
   }
 
   function fitAll() {
-    const n = result ? result.data.length : 0;
-    if (!n) return;
-    const range = { from: -2, to: n + 2 };
+    if (!points.length) return;
+    const range = { from: -2, to: points.length + 2 };
     syncing = true;
     for (const key of Object.keys(charts)) {
-      if (key === 'osc' && el.osc.hidden) continue;
       charts[key].timeScale().setVisibleLogicalRange(range);
-      // dragging the price axis switches autoscale off; get it back
       charts[key].priceScale('right').applyOptions({ autoScale: true });
     }
     syncing = false;
   }
 
-  function setShowMarkers(on) {
-    showMarkers = on;
-    if (main.candle) main.candle.setMarkers(on ? markerCache : []);
-  }
-
-  function clearFocus() {
-    for (const l of focusLines) {
-      try { main.candle.removePriceLine(l); } catch (e) { /* series replaced */ }
-    }
-    focusLines = [];
-  }
-
-  // Zoom to one trade and mark its entry and exit prices.
-  function focusTrade(tr) {
-    if (!result || !tr) return;
-    clearFocus();
-    const t = theme();
-    const span = Math.max(tr.exitIndex - tr.entryIndex, 1);
-    const padBars = Math.max(30, span * 1.5);
-    const range = { from: tr.entryIndex - padBars, to: tr.exitIndex + padBars };
+  // Zoom to the window around one trade.
+  function focusWindow(fromSec, toSec) {
+    if (!points.length) return;
+    const near = (t) => {
+      let best = 0;
+      let dist = Infinity;
+      for (let i = 0; i < points.length; i++) {
+        const d = Math.abs(points[i].time - t);
+        if (d < dist) {
+          dist = d;
+          best = i;
+        }
+      }
+      return best;
+    };
+    const a = near(fromSec);
+    const b = near(toSec);
+    const padBars = Math.max(30, (b - a) * 1.5);
     syncing = true;
-    for (const key of Object.keys(charts)) {
-      if (key === 'osc' && el.osc.hidden) continue;
-      charts[key].timeScale().setVisibleLogicalRange(range);
-    }
+    for (const key of Object.keys(charts)) charts[key].timeScale().setVisibleLogicalRange({ from: a - padBars, to: b + padBars });
     syncing = false;
-    const color = tr.side === 'long' ? t.up : t.down;
-    focusLines.push(main.candle.createPriceLine({ price: tr.entryPrice, color, lineWidth: 1, lineStyle: LW().LineStyle.Dashed, axisLabelVisible: true, title: 'entry' }));
-    focusLines.push(main.candle.createPriceLine({ price: tr.exitPrice, color: t.ink2, lineWidth: 1, lineStyle: LW().LineStyle.Dashed, axisLabelVisible: true, title: 'exit' }));
-    updateLegends(tr.entryIndex);
+    updateLegends(b);
   }
 
   // ---------------------------------------------------------------- legends & crosshair
 
   function onCrosshair(source, param) {
-    if (!result || syncing) return;
+    if (!points.length || syncing) return;
     const idx = param && param.time !== undefined ? timeIndex.get(param.time) : undefined;
-    const i = idx === undefined ? result.data.length - 1 : idx;
-    updateLegends(i);
+    updateLegends(idx === undefined ? points.length - 1 : idx);
     syncing = true;
     for (const key of Object.keys(charts)) {
       if (key === source) continue;
-      if (key === 'osc' && el.osc.hidden) continue;
       if (idx === undefined) {
         charts[key].clearCrosshairPosition();
         continue;
       }
-      const s = { price: main.candle, osc: main.osc, equity: main.equity, dd: main.dd }[key];
-      if (!s) continue;
-      const v = key === 'price' ? result.data.close[i] : key === 'equity' ? result.equity[i] : key === 'dd' ? result.drawdown[i] : overlays.find((o) => o.series === s).plot.series[i];
-      if (Number.isFinite(v)) charts[key].setCrosshairPosition(v, param.time, s);
+      const v = key === 'equity' ? points[idx].equity : key === 'dd' ? points[idx].drawdown : volume[idx] && volume[idx].value;
+      if (Number.isFinite(v)) charts[key].setCrosshairPosition(v, param.time, main[key]);
     }
     syncing = false;
   }
@@ -325,41 +248,34 @@
   }
 
   function updateLegends(i) {
-    if (!result) return;
-    const d = result.data;
     const f = BT.fmt;
-    const pl = el.priceLegend;
-    pl.textContent = '';
-    item(pl, null, '', f.time(d.time[i], d));
-    item(pl, null, 'O', f.price(d.open[i]));
-    item(pl, null, 'H', f.price(d.high[i]));
-    item(pl, null, 'L', f.price(d.low[i]));
-    item(pl, null, 'C', f.price(d.close[i]));
-    if (d.volume[i] > 0) item(pl, null, 'Vol', f.compact(d.volume[i]));
-    const ol = el.oscLegend;
-    ol.textContent = '';
-    for (const o of overlays) {
-      const v = o.plot.series[i];
-      const txt = Number.isFinite(v) ? (o.plot.pane === 'lower' ? f.num(v, 2) : f.price(v)) : '–';
-      item(o.plot.pane === 'lower' ? ol : pl, o.color, o.plot.name, txt);
-    }
-    const el2 = el.equityLegend;
-    el2.textContent = '';
-    const cap = result.settings.capital;
-    item(el2, theme().accent, 'Strategy', `${f.money(result.equity[i])} (${f.pct((result.equity[i] / cap - 1) * 100, 1)})`);
-    item(el2, theme().bh, 'Buy and hold', `${f.money(result.buyHold[i])} (${f.pct((result.buyHold[i] / cap - 1) * 100, 1)})`);
+    el.equityLegend.textContent = '';
     el.ddLegend.textContent = '';
-    item(el.ddLegend, null, 'Drawdown', f.pct(result.drawdown ? result.drawdown[i] : 0, 1));
+    el.volLegend.textContent = '';
+    if (!points.length || !points[i]) return;
+    const p = points[i];
+    item(el.equityLegend, null, '', f.date(Math.round(p.time)));
+    item(el.equityLegend, theme().accent, 'Equity', `${f.money(p.equity)} (${f.pct((p.equity / capital - 1) * 100, 1)})`);
+    item(el.ddLegend, null, 'Drawdown', f.pct(p.drawdown, 1));
+    const v = volume[i];
+    if (v) item(el.volLegend, null, 'Volume', f.compact(v.value));
+    else if (!volumeNote) item(el.volLegend, null, 'Volume', '–');
+    if (volumeNote) item(el.volLegend, null, '', volumeNote);
   }
 
   function retheme() {
-    if (!charts.price) return;
+    if (!charts.equity) return;
     destroy();
     create();
-    if (result) render(result);
+    if (points.length) {
+      const keep = { volume, volumeNote };
+      render(points, capital);
+      ({ volume, volumeNote } = keep);
+      drawVolume();
+    }
   }
 
-  // ---------------------------------------------------------------- scatter (trade excursions)
+  // ---------------------------------------------------------------- scatter
 
   const SVG = 'http://www.w3.org/2000/svg';
   function svgEl(tag, attrs, parent) {
@@ -383,24 +299,24 @@
    * points: [{ x, y, win, label }]; opts: { xLabel, yLabel, onClick(point) }.
    * Both axes always include 0 so "against you" / "in your favour" read at a glance.
    */
-  function scatter(container, points, opts) {
+  function scatter(container, pts, opts) {
     container.textContent = '';
     const W = 460;
     const H = 270;
     const m = { l: 46, r: 12, t: 10, b: 36 };
     const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${opts.xLabel} against ${opts.yLabel}` }, container);
-    if (!points.length) {
+    if (!pts.length) {
       svgEl('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'empty-note' }, svg).textContent = 'No trades to show';
       return;
     }
     const ext = (vals) => {
-      let lo = Math.min(0, ...vals);
-      let hi = Math.max(0, ...vals);
-      const pad = (hi - lo || 1) * 0.06;
-      return [lo - pad, hi + pad];
+      const lo = Math.min(0, ...vals);
+      const hi = Math.max(0, ...vals);
+      const p = (hi - lo || 1) * 0.06;
+      return [lo - p, hi + p];
     };
-    const [x0, x1] = ext(points.map((p) => p.x));
-    const [y0, y1] = ext(points.map((p) => p.y));
+    const [x0, x1] = ext(pts.map((p) => p.x));
+    const [y0, y1] = ext(pts.map((p) => p.y));
     const X = (v) => m.l + ((v - x0) / (x1 - x0)) * (W - m.l - m.r);
     const Y = (v) => H - m.b - ((v - y0) / (y1 - y0)) * (H - m.t - m.b);
     for (const t of niceTicks(y0, y1, 5)) {
@@ -412,10 +328,10 @@
       svgEl('text', { x: X(t), y: H - m.b + 13, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = `${+t.toFixed(2)}%`;
     }
     svgEl('text', { x: (m.l + W - m.r) / 2, y: H - 4, 'text-anchor': 'middle', class: 'axis-label' }, svg).textContent = opts.xLabel;
-    const yl = svgEl('text', { x: 11, y: (m.t + H - m.b) / 2, 'text-anchor': 'middle', class: 'axis-label', transform: `rotate(-90 11 ${(m.t + H - m.b) / 2})` }, svg);
-    yl.textContent = opts.yLabel;
+    const mid = (m.t + H - m.b) / 2;
+    svgEl('text', { x: 11, y: mid, 'text-anchor': 'middle', class: 'axis-label', transform: `rotate(-90 11 ${mid})` }, svg).textContent = opts.yLabel;
     // losers first so winners sit on top where they overlap
-    const sorted = points.slice(0, 3000).sort((a, b) => a.win - b.win);
+    const sorted = pts.slice(0, 3000).sort((a, b) => a.win - b.win);
     for (const p of sorted) {
       const c = svgEl('circle', { cx: X(p.x), cy: Y(p.y), r: 4, class: p.win ? 'win' : 'loss' }, svg);
       svgEl('title', {}, c).textContent = p.label;
@@ -426,5 +342,5 @@
     }
   }
 
-  BT.charts = { init, render, fitAll, focusTrade, setShowMarkers, retheme, scatter };
+  BT.charts = { init, render, setVolume, fitAll, focusWindow, retheme, scatter };
 })(typeof window !== 'undefined' ? window : globalThis);
