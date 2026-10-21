@@ -3,6 +3,11 @@
     python3 gex/server.py              # then open http://localhost:8010
     python3 gex/server.py --port 9010
 
+While it runs, it saves the gamma levels on weekdays from 9:30 to 16:00 New York time: one line
+every 10 minutes in ~/gex-snapshots/gex-log.csv, plus the full data at the open in
+~/gex-snapshots/YYYY-MM-DD-open.json when it is running by 9:45. They live outside this folder, so
+updating the app keeps them.
+
 Data: CBOE's free delayed option quotes for QQQ and NDX (open interest updates once a day before the
 open; quotes are about 15 minutes late) and Yahoo's 5-minute NQ=F futures for the price and volume.
 
@@ -17,6 +22,7 @@ How GEX is calculated (the usual public method):
 Needs only Python 3.9+, no packages.
 """
 import argparse
+import csv
 import datetime as dt
 import json
 import math
@@ -39,6 +45,9 @@ RATE = 0.04  # risk-free rate for Black-Scholes; small changes barely move the l
 BUCKET = 25  # NQ points per strike bucket
 RANGE = 0.08  # show and search levels within 8% of the price
 CACHE_SECONDS = 600
+SNAPSHOT_DIR = Path.home() / "gex-snapshots"
+SNAPSHOT_EVERY = 600  # seconds between saved readings during the session
+SNAPSHOT_FIELDS = ["time_ny", "options", "nq", "qqq", "ndx", "total_gex", "regime", "flip", "call_wall", "put_wall", "options_data_time"]
 SURFACE_BUCKET = 50  # NQ points per surface row
 SURFACE_RANGE = 0.04  # surface rows within 4% of the price
 SURFACE_EXPIRIES = 14  # nearest expiry dates shown as surface columns
@@ -257,6 +266,42 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"error": f"{type(e).__name__}: {e}"}, 502)
 
 
+def save_snapshot(now_ny):
+    """Append this reading (all expiries and 7 days) to the log; keep the full data at the open."""
+    SNAPSHOT_DIR.mkdir(exist_ok=True)
+    log = SNAPSHOT_DIR / "gex-log.csv"
+    new = not log.exists()
+    with log.open("a", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=SNAPSHOT_FIELDS)
+        if new:
+            w.writeheader()
+        for max_days in (0, 7):
+            g = CACHE.get(("gex", max_days), lambda: compute_gex(max_days), 60)
+            w.writerow({
+                "time_ny": now_ny.strftime("%Y-%m-%d %H:%M"), "options": "all" if max_days == 0 else "7d",
+                "nq": round(g["nq"], 2), "qqq": g["qqq"], "ndx": g["ndx"], "total_gex": round(g["total"]),
+                "regime": g["regime"], "flip": round(g["flip"], 2) if g["flip"] is not None else "",
+                "call_wall": g["callWall"], "put_wall": g["putWall"], "options_data_time": g["dataTime"],
+            })
+            opening = SNAPSHOT_DIR / f"{now_ny:%Y-%m-%d}-open{'' if max_days == 0 else '-7d'}.json"
+            if now_ny.hour * 60 + now_ny.minute <= 585 and not opening.exists():  # 9:30-9:45 only
+                opening.write_text(json.dumps(g))
+
+
+def snapshot_loop():
+    last = 0.0
+    while True:
+        now_ny = dt.datetime.now(NY)
+        minutes = now_ny.hour * 60 + now_ny.minute
+        if now_ny.weekday() < 5 and 570 <= minutes <= 960 and time.time() - last >= SNAPSHOT_EVERY:
+            last = time.time()
+            try:
+                save_snapshot(now_ny)
+            except Exception as e:  # a missed reading must not stop the page
+                print(f"  Snapshot at {now_ny:%H:%M} failed: {type(e).__name__}: {e}")
+        time.sleep(20)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Nasdaq gamma levels on localhost.")
     ap.add_argument("--port", type=int, default=8010)
@@ -265,7 +310,10 @@ def main():
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     httpd.daemon_threads = True
     url = f"http://localhost:{args.port}/"
-    print(f"\n  Nasdaq gamma levels: {url}\n  Press Ctrl+C to stop.\n")
+    print(f"\n  Nasdaq gamma levels: {url}")
+    print(f"  Saving gamma readings 9:30-16:00 New York time to {SNAPSHOT_DIR}")
+    print("  Press Ctrl+C to stop.\n")
+    threading.Thread(target=snapshot_loop, daemon=True).start()
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
